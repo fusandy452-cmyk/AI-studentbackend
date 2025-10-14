@@ -1,8 +1,8 @@
 {
   "name": "ai-study-abroad-advisor",
-  "type": "nodejs",
-  "buildCommand": "cp package-minimal.json package.json && npm install",
-  "startCommand": "node server-minimal.js",
+  "type": "python",
+  "buildCommand": "pip install -r requirements.txt",
+  "startCommand": "gunicorn --bind 0.0.0.0:$PORT app:app",
   "rootDirectory": ".",
   "domains": [
     "aistudentbackend.zeabur.app"
