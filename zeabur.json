@@ -1,0 +1,14 @@
+{
+  "name": "ai-study-abroad-advisor",
+  "type": "nodejs",
+  "buildCommand": "cp package-minimal.json package.json && npm install",
+  "startCommand": "node server-minimal.js",
+  "rootDirectory": ".",
+  "domains": [
+    "aistudentbackend.zeabur.app"
+  ],
+  "healthCheck": {
+    "path": "/health",
+    "interval": 30
+  }
+}
