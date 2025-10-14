@@ -39,6 +39,71 @@ def gemini_generate_text(prompt):
 # 簡單的記憶體資料庫
 user_profiles = {}
 
+# 知識庫載入
+def load_knowledge_base():
+    """載入知識庫檔案"""
+    knowledge_content = ""
+    try:
+        # 載入 Markdown 知識庫
+        md_path = os.path.join(os.path.dirname(__file__), 'knowledge', 'AI留學顧問_KB_美國大學申請_v2025-10-14.md')
+        if os.path.exists(md_path):
+            with open(md_path, 'r', encoding='utf-8') as f:
+                knowledge_content += f.read() + "\n\n"
+        
+        # 載入 JSONL 知識庫
+        jsonl_path = os.path.join(os.path.dirname(__file__), 'knowledge', 'AI留學顧問_FAQ_美國大學申請_v2025-10-14.jsonl')
+        if os.path.exists(jsonl_path):
+            with open(jsonl_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            if 'question' in data and 'answer' in data:
+                                knowledge_content += "Q: " + data['question'] + "\nA: " + data['answer'] + "\n\n"
+                        except:
+                            continue
+        
+        print('Knowledge base loaded, content length: {}'.format(len(knowledge_content)))
+        return knowledge_content
+    except Exception as e:
+        print('Error loading knowledge base: {}'.format(e))
+        return ""
+
+# 檢索相關知識
+def retrieve_relevant_knowledge(query, knowledge_base, max_chars=1500):
+    """從知識庫中檢索相關內容"""
+    if not knowledge_base or not query:
+        return ""
+    
+    # 簡單的關鍵字匹配
+    query_words = query.lower().split()
+    lines = knowledge_base.split('\n')
+    relevant_lines = []
+    
+    for line in lines:
+        line_lower = line.lower()
+        score = sum(1 for word in query_words if word in line_lower)
+        if score > 0:
+            relevant_lines.append((score, line))
+    
+    # 按相關性排序
+    relevant_lines.sort(key=lambda x: x[0], reverse=True)
+    
+    # 選擇最相關的內容
+    selected_content = []
+    total_chars = 0
+    for score, line in relevant_lines:
+        if total_chars + len(line) > max_chars:
+            break
+        selected_content.append(line)
+        total_chars += len(line)
+    
+    return '\n'.join(selected_content)
+
+# 載入知識庫
+KNOWLEDGE_BASE = load_knowledge_base()
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
@@ -161,6 +226,11 @@ def chat():
         # 獲取用戶資料
         user_profile = user_profiles.get(profile_id, {})
         
+        # 檢索相關知識庫內容
+        relevant_knowledge = ""
+        if message and message.strip():
+            relevant_knowledge = retrieve_relevant_knowledge(message, KNOWLEDGE_BASE)
+        
         # 構建 Gemini 提示
         if language == 'en':
             system_prompt = """You are a professional AI Study Abroad Advisor. You provide personalized, expert guidance for students and parents planning international education.
@@ -168,34 +238,42 @@ def chat():
 User Role: {}
 User Profile: {}
 
-Please respond in English and provide comprehensive, actionable advice.""".format(
+Knowledge Base Context:
+{}
+
+Please respond in English and provide comprehensive, actionable advice based on the knowledge base and user profile.""".format(
                 user_role,
-                json.dumps(user_profile, indent=2) if user_profile else 'No profile data available'
+                json.dumps(user_profile, indent=2) if user_profile else 'No profile data available',
+                relevant_knowledge if relevant_knowledge else 'No relevant knowledge found'
             )
             
             if message and message.strip():
                 user_prompt = """User Question: "{}"
 
-Please provide detailed, professional advice based on the user's role and profile. Include specific recommendations, timelines, and actionable steps.""".format(message)
+Please provide detailed, professional advice based on the knowledge base, user's role and profile. Include specific recommendations, timelines, and actionable steps. Reference the knowledge base when relevant.""".format(message)
             else:
-                user_prompt = """Please provide a welcoming message and overview of how you can help this {} with their study abroad planning.""".format(user_role)
+                user_prompt = """Please provide a welcoming message and overview of how you can help this {} with their study abroad planning, incorporating relevant knowledge from the knowledge base.""".format(user_role)
         else:
             system_prompt = """你是一位專業的AI留學顧問。你為計劃國際教育的學生和家長提供個人化的專業指導。
 
 用戶角色：{}
 用戶資料：{}
 
-請用中文回應，提供全面且可執行的建議。""".format(
+知識庫內容：
+{}
+
+請用中文回應，提供全面且可執行的建議，並參考知識庫內容。""".format(
                 user_role,
-                json.dumps(user_profile, indent=2) if user_profile else '無資料'
+                json.dumps(user_profile, indent=2) if user_profile else '無資料',
+                relevant_knowledge if relevant_knowledge else '無相關知識內容'
             )
             
             if message and message.strip():
                 user_prompt = """用戶問題：「{}」
 
-請根據用戶角色和資料提供詳細的專業建議，包括具體推薦、時間規劃和可執行的步驟。""".format(message)
+請根據知識庫內容、用戶角色和資料提供詳細的專業建議，包括具體推薦、時間規劃和可執行的步驟。適當時請引用知識庫中的資訊。""".format(message)
             else:
-                user_prompt = """請提供歡迎訊息，並概述你如何幫助這位{}進行留學規劃。""".format(user_role)
+                user_prompt = """請提供歡迎訊息，並概述你如何幫助這位{}進行留學規劃，可參考知識庫中的相關內容。""".format(user_role)
         
         full_prompt = "{}\n\n{}".format(system_prompt, user_prompt)
         
@@ -234,4 +312,3 @@ def root():
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
-
