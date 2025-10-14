@@ -241,7 +241,17 @@ User Profile: {}
 Knowledge Base Context:
 {}
 
-Please respond in English and provide comprehensive, actionable advice based on the knowledge base and user profile.""".format(
+CRITICAL RESPONSE GUIDELINES:
+1. Keep responses CONCISE and FOCUSED - answer the specific question asked
+2. Use emojis to make content engaging (🎓📚💰🏠✈️📋)
+3. Use clear paragraph breaks between topics
+4. Use bullet points (•) for lists, not long paragraphs
+5. Use **bold** for important sections
+6. Ask 1-2 follow-up questions to continue the conversation
+7. Maximum 3-4 main points per response
+8. Reference knowledge base when relevant
+
+Please respond in English and provide focused, actionable advice.""".format(
                 user_role,
                 json.dumps(user_profile, indent=2) if user_profile else 'No profile data available',
                 relevant_knowledge if relevant_knowledge else 'No relevant knowledge found'
@@ -250,9 +260,11 @@ Please respond in English and provide comprehensive, actionable advice based on 
             if message and message.strip():
                 user_prompt = """User Question: "{}"
 
-Please provide detailed, professional advice based on the knowledge base, user's role and profile. Include specific recommendations, timelines, and actionable steps. Reference the knowledge base when relevant.""".format(message)
+Provide a CONCISE, focused response that directly answers this question. Use emojis, clear formatting, and ask 1-2 follow-up questions to continue the conversation.
+
+Keep it under 200 words and focus on the most important points.""".format(message)
             else:
-                user_prompt = """Please provide a welcoming message and overview of how you can help this {} with their study abroad planning, incorporating relevant knowledge from the knowledge base.""".format(user_role)
+                user_prompt = """Provide a brief, welcoming message for this {} (under 100 words). Use emojis and ask 1-2 questions to start the conversation.""".format(user_role)
         else:
             system_prompt = """你是一位專業的AI留學顧問。你為計劃國際教育的學生和家長提供個人化的專業指導。
 
@@ -262,7 +274,17 @@ Please provide detailed, professional advice based on the knowledge base, user's
 知識庫內容：
 {}
 
-請用中文回應，提供全面且可執行的建議，並參考知識庫內容。""".format(
+重要回覆原則：
+1. 回覆要簡潔有重點 - 直接回答用戶的具體問題
+2. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
+3. 段落分明，適當換行
+4. 使用項目符號 (•) 列出要點，避免長段落
+5. 使用 **粗體** 標示重要段落
+6. 提出 1-2 個後續問題延續對話
+7. 每次回覆最多 3-4 個重點
+8. 適時引用知識庫內容
+
+請用中文回應，提供有針對性的建議。""".format(
                 user_role,
                 json.dumps(user_profile, indent=2) if user_profile else '無資料',
                 relevant_knowledge if relevant_knowledge else '無相關知識內容'
@@ -271,9 +293,11 @@ Please provide detailed, professional advice based on the knowledge base, user's
             if message and message.strip():
                 user_prompt = """用戶問題：「{}」
 
-請根據知識庫內容、用戶角色和資料提供詳細的專業建議，包括具體推薦、時間規劃和可執行的步驟。適當時請引用知識庫中的資訊。""".format(message)
+請提供簡潔、有針對性的回覆，直接回答這個問題。使用 emoji、清楚格式，並提出 1-2 個後續問題延續對話。
+
+控制在 200 字以內，專注於最重要的要點。""".format(message)
             else:
-                user_prompt = """請提供歡迎訊息，並概述你如何幫助這位{}進行留學規劃，可參考知識庫中的相關內容。""".format(user_role)
+                user_prompt = """請為這位{}提供簡短的歡迎訊息（100字以內）。使用 emoji 並提出 1-2 個問題開始對話。""".format(user_role)
         
         full_prompt = "{}\n\n{}".format(system_prompt, user_prompt)
         
@@ -312,3 +336,4 @@ def root():
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
+
