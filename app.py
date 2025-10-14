@@ -244,12 +244,13 @@ Knowledge Base Context:
 CRITICAL RESPONSE GUIDELINES:
 1. Keep responses CONCISE and FOCUSED - answer the specific question asked
 2. Use emojis to make content engaging (🎓📚💰🏠✈️📋)
-3. Use clear paragraph breaks between topics
-4. Use bullet points (•) for lists, not long paragraphs
+3. MANDATORY: Each paragraph must be separated by blank lines
+4. Use bullet points (•) for lists, each point on separate line
 5. Use **bold** for important sections
 6. Ask 1-2 follow-up questions to continue the conversation
 7. Maximum 3-4 main points per response
 8. Reference knowledge base when relevant
+9. FORCE: Each topic paragraph must have line breaks, never run together
 
 Please respond in English and provide focused, actionable advice.""".format(
                 user_role,
@@ -260,9 +261,16 @@ Please respond in English and provide focused, actionable advice.""".format(
             if message and message.strip():
                 user_prompt = """User Question: "{}"
 
-Provide a CONCISE, focused response that directly answers this question. Use emojis, clear formatting, and ask 1-2 follow-up questions to continue the conversation.
+Provide a CONCISE, focused response that directly answers this question.
 
-Keep it under 200 words and focus on the most important points.""".format(message)
+MANDATORY FORMATTING:
+• Use emojis for visual appeal
+• Each paragraph MUST be separated by blank lines
+• Use bullet points (•) for lists, each on separate line
+• Use **bold** for important sections
+• Ask 1-2 follow-up questions
+• Keep under 200 words
+• NEVER run paragraphs together - always add line breaks between topics""".format(message)
             else:
                 user_prompt = """Provide a brief, welcoming message for this {} (under 100 words). Use emojis and ask 1-2 questions to start the conversation.""".format(user_role)
         else:
@@ -277,12 +285,13 @@ Keep it under 200 words and focus on the most important points.""".format(messag
 重要回覆原則：
 1. 回覆要簡潔有重點 - 直接回答用戶的具體問題
 2. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
-3. 段落分明，適當換行
-4. 使用項目符號 (•) 列出要點，避免長段落
+3. 每個段落之間必須有空行分隔
+4. 使用項目符號 (•) 列出要點，每個要點單獨一行
 5. 使用 **粗體** 標示重要段落
 6. 提出 1-2 個後續問題延續對話
 7. 每次回覆最多 3-4 個重點
 8. 適時引用知識庫內容
+9. 強制要求：每個主題段落後必須換行，不要連在一起
 
 請用中文回應，提供有針對性的建議。""".format(
                 user_role,
@@ -293,11 +302,24 @@ Keep it under 200 words and focus on the most important points.""".format(messag
             if message and message.strip():
                 user_prompt = """用戶問題：「{}」
 
-請提供簡潔、有針對性的回覆，直接回答這個問題。使用 emoji、清楚格式，並提出 1-2 個後續問題延續對話。
+請提供簡潔、有針對性的回覆，直接回答這個問題。
 
-控制在 200 字以內，專注於最重要的要點。""".format(message)
+強制格式要求：
+• 使用 emoji 增加視覺吸引力
+• 每個段落之間必須有空行分隔
+• 使用項目符號 (•) 列出要點，每個要點單獨一行
+• 使用 **粗體** 標示重要段落
+• 提出 1-2 個後續問題延續對話
+• 控制在 200 字以內
+• 絕對不要讓段落連在一起 - 主題段落間必須換行""".format(message)
             else:
-                user_prompt = """請為這位{}提供簡短的歡迎訊息（100字以內）。使用 emoji 並提出 1-2 個問題開始對話。""".format(user_role)
+                user_prompt = """請為這位{}提供簡短的歡迎訊息（100字以內）。
+
+格式要求：
+• 使用 emoji (🎓📚💰🏠✈️📋)
+• 段落分明，適當換行
+• 提出 1-2 個問題開始對話
+• 保持簡潔有重點""".format(user_role)
         
         full_prompt = "{}\n\n{}".format(system_prompt, user_prompt)
         
@@ -336,4 +358,3 @@ def root():
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
-
