@@ -13,13 +13,28 @@ app = Flask(__name__)
 CORS(app, origins=["https://aistudent.zeabur.app"])
 
 # 環境變數
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
 SESSION_SECRET = os.getenv('SESSION_SECRET', 'dev-secret')
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
 
 # 初始化 Gemini AI
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-pro')
+def use_gemini():
+    return bool(GEMINI_API_KEY)
+
+def gemini_generate_text(prompt):
+    """使用 Gemini AI 生成文本"""
+    if not use_gemini():
+        return ""
+    
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        res = model.generate_content(prompt)
+        return (res.text or "").strip()
+    except Exception as e:
+        print('Gemini AI error: {}'.format(e))
+        return ""
 
 # 簡單的記憶體資料庫
 user_profiles = {}
@@ -185,8 +200,14 @@ Please provide detailed, professional advice based on the user's role and profil
         full_prompt = "{}\n\n{}".format(system_prompt, user_prompt)
         
         # 呼叫 Gemini AI
-        response = model.generate_content(full_prompt)
-        reply = response.text
+        if use_gemini():
+            reply = gemini_generate_text(full_prompt)
+        else:
+            # 備用回覆
+            if language == 'en':
+                reply = 'AI service is temporarily unavailable. Please check your GEMINI_API_KEY configuration.'
+            else:
+                reply = 'AI服務暫時不可用，請檢查GEMINI_API_KEY配置。'
         
         return jsonify({'ok': True, 'data': {'response': reply}})
         
