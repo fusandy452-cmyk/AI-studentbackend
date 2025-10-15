@@ -509,6 +509,9 @@ def admin_dashboard():
         profiles = db.get_user_profiles()
         messages = db.get_chat_messages(limit=1000)
         stats = db.get_usage_stats(days=30)
+        study_progress = db.get_study_progress()
+        chat_summaries = db.get_chat_summaries()
+        role_summary = db.get_user_role_summary()
         
         # 計算統計數據
         total_users = len(users)
@@ -539,12 +542,80 @@ def admin_dashboard():
             },
             'recent_users': recent_users,
             'recent_messages': recent_messages,
-            'usage_stats': stats
+            'usage_stats': stats,
+            'study_progress': study_progress,
+            'chat_summaries': chat_summaries,
+            'role_summary': role_summary
         }
         
         return jsonify({'ok': True, 'data': dashboard_data})
     except Exception as e:
         print('Admin dashboard error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/progress', methods=['GET'])
+@verify_jwt_token
+def admin_get_progress():
+    """獲取留學進度"""
+    try:
+        profile_id = request.args.get('profile_id')
+        progress = db.get_study_progress(profile_id)
+        return jsonify({'ok': True, 'data': progress})
+    except Exception as e:
+        print('Admin get progress error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/progress', methods=['POST'])
+@verify_jwt_token
+def admin_save_progress():
+    """儲存留學進度"""
+    try:
+        progress_data = request.get_json()
+        success = db.save_study_progress(progress_data)
+        if success:
+            return jsonify({'ok': True, 'message': 'Progress saved successfully'})
+        else:
+            return jsonify({'ok': False, 'error': 'Failed to save progress'}), 500
+    except Exception as e:
+        print('Admin save progress error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/summaries', methods=['GET'])
+@verify_jwt_token
+def admin_get_summaries():
+    """獲取聊天摘要"""
+    try:
+        profile_id = request.args.get('profile_id')
+        summaries = db.get_chat_summaries(profile_id)
+        return jsonify({'ok': True, 'data': summaries})
+    except Exception as e:
+        print('Admin get summaries error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/summaries', methods=['POST'])
+@verify_jwt_token
+def admin_save_summary():
+    """儲存聊天摘要"""
+    try:
+        summary_data = request.get_json()
+        success = db.save_chat_summary(summary_data)
+        if success:
+            return jsonify({'ok': True, 'message': 'Summary saved successfully'})
+        else:
+            return jsonify({'ok': False, 'error': 'Failed to save summary'}), 500
+    except Exception as e:
+        print('Admin save summary error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/role-summary', methods=['GET'])
+@verify_jwt_token
+def admin_get_role_summary():
+    """獲取用戶角色摘要"""
+    try:
+        summary = db.get_user_role_summary()
+        return jsonify({'ok': True, 'data': summary})
+    except Exception as e:
+        print('Admin get role summary error: {}'.format(e))
         return jsonify({'ok': False, 'error': 'Internal server error'}), 500
 
 @app.route('/', methods=['GET'])
@@ -573,3 +644,4 @@ def admin_page():
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
+
