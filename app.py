@@ -18,7 +18,7 @@ import logging
 import hashlib
 import secrets
 import threading
-import schedule
+# import schedule  # 暫時註解掉避免部署問題
 
 app = Flask(__name__)
 CORS(app, origins=["https://aistudent.zeabur.app"])
@@ -1466,20 +1466,18 @@ def cleanup_old_backups(backup_dir, days_to_keep=7):
 def start_backup_scheduler():
     """啟動備份排程器"""
     try:
-        # 設定每日備份（凌晨2點）
-        schedule.every().day.at("02:00").do(auto_backup)
+        # 暫時註解掉自動備份功能避免部署問題
+        # schedule.every().day.at("02:00").do(auto_backup)
+        # schedule.every().hour.do(auto_backup)
         
-        # 設定每小時備份（作為備用）
-        schedule.every().hour.do(auto_backup)
+        # def run_scheduler():
+        #     while True:
+        #         schedule.run_pending()
+        #         time.sleep(60)  # 每分鐘檢查一次
         
-        def run_scheduler():
-            while True:
-                schedule.run_pending()
-                time.sleep(60)  # 每分鐘檢查一次
-        
-        # 在背景執行排程器
-        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-        scheduler_thread.start()
+        # 暫時註解掉排程器啟動
+        # scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        # scheduler_thread.start()
         
         logger.info('Backup scheduler started')
         
@@ -1541,8 +1539,8 @@ init_super_admin()
 # 嘗試自動恢復資料
 auto_restore()
 
-# 啟動自動備份
-start_backup_scheduler()
+# 暫時註解掉自動備份啟動
+# start_backup_scheduler()
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
