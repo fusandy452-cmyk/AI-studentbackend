@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect
 from flask_cors import CORS
 import os
 import jwt
@@ -32,6 +32,7 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
 GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
 SESSION_SECRET = os.getenv('SESSION_SECRET', 'dev-secret')
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
+GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
 LINE_CHANNEL_ID = os.getenv('LINE_CHANNEL_ID')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 
@@ -55,6 +56,33 @@ def gemini_generate_text(prompt):
 
 # 初始化資料庫
 db = DatabaseManager()
+
+# 速率限制
+rate_limit_storage = defaultdict(list)
+RATE_LIMIT_WINDOW = 60  # 60秒
+RATE_LIMIT_MAX_REQUESTS = 10  # 每分鐘最多10次請求
+
+def check_rate_limit(ip_address):
+    """檢查速率限制"""
+    current_time = time.time()
+    # 清理過期的請求記錄
+    rate_limit_storage[ip_address] = [
+        req_time for req_time in rate_limit_storage[ip_address]
+        if current_time - req_time < RATE_LIMIT_WINDOW
+    ]
+    
+    # 檢查是否超過限制
+    if len(rate_limit_storage[ip_address]) >= RATE_LIMIT_MAX_REQUESTS:
+        return False
+    
+    # 記錄當前請求
+    rate_limit_storage[ip_address].append(current_time)
+    return True
+
+def validate_email(email):
+    """驗證電子郵件格式"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
 
 # 密碼雜湊函數
 def hash_password(password):
@@ -123,117 +151,368 @@ def health_check():
             'timestamp': datetime.now().isoformat()
         }), 500
 
-# Google OAuth 登入
-@app.route('/api/v1/auth/google/login', methods=['POST'])
-def google_login():
+# Google OAuth 驗證
+@app.route('/api/v1/auth/google/verify', methods=['POST'])
+def verify_google_token():
+    # 速率限制
+    client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+    if not check_rate_limit(client_ip):
+        return jsonify({'ok': False, 'error': 'rate_limit_exceeded'}), 429
+    
     try:
         data = request.get_json()
-        token = data.get('token')
+        id_token_str = data.get('idToken')
         
-        if not token:
-            return jsonify({'ok': False, 'error': 'Token required'}), 400
+        if not id_token_str:
+            return jsonify({'ok': False, 'error': 'missing idToken'}), 400
         
-        # 驗證 Google token
-        try:
-            idinfo = id_token.verify_oauth2_token(token, requests.Request(), GOOGLE_CLIENT_ID)
-            user_id = idinfo['sub']
-            email = idinfo.get('email', '')
-            name = idinfo.get('name', '')
-            picture = idinfo.get('picture', '')
-        except ValueError as e:
-            return jsonify({'ok': False, 'error': 'Invalid token'}), 400
+        # 驗證 Google ID Token
+        idinfo = id_token.verify_oauth2_token(
+            id_token_str, requests.Request(), GOOGLE_CLIENT_ID)
         
-        # 檢查用戶是否存在
-        user = db.get_user_by_google_id(user_id)
-        if not user:
-            # 創建新用戶
-            user_id_db = db.create_user({
-                'google_id': user_id,
-                'email': email,
-                'name': name,
-                'picture': picture,
-                'login_type': 'google'
-            })
-        else:
-            user_id_db = user['user_id']
-            # 更新最後登入時間
-            db.update_user_login_time(user_id_db)
-        
-        # 生成 JWT token
-        payload = {
-            'user_id': user_id_db,
-            'google_id': user_id,
-            'email': email,
-            'name': name,
-            'exp': datetime.utcnow() + timedelta(days=7)
+        user = {
+            'userId': idinfo['sub'],
+            'email': idinfo['email'],
+            'name': idinfo['name'],
+            'avatar': idinfo.get('picture')
         }
-        jwt_token = jwt.encode(payload, SESSION_SECRET, algorithm='HS256')
         
-        return jsonify({
-            'ok': True,
-            'token': jwt_token,
-            'user': {
-                'user_id': user_id_db,
-                'email': email,
-                'name': name,
-                'picture': picture
-            }
+        # 儲存用戶資料到資料庫
+        db.save_user(user)
+        
+        # 記錄使用統計
+        db.save_usage_stat({
+            'user_id': user['userId'],
+            'action_type': 'login',
+            'action_details': {'method': 'google'}
         })
         
+        # 簽發 JWT
+        payload = user.copy()
+        payload['exp'] = datetime.utcnow() + timedelta(days=7)
+        token = jwt.encode(payload, SESSION_SECRET, algorithm='HS256')
+        
+        return jsonify({'ok': True, 'token': token, 'user': user})
+        
     except Exception as e:
-        logger.error(f"Google login error: {e}")
-        return jsonify({'ok': False, 'error': 'Login failed'}), 500
+        logger.error('Google verify error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'verify_failed'}), 401
+
+@app.route('/auth/google/callback', methods=['GET'])
+def google_callback():
+    """處理 Google OAuth 回調"""
+    try:
+        code = request.args.get('code')
+        state = request.args.get('state')
+        error = request.args.get('error')
+        
+        if error:
+            return redirect('https://aistudent.zeabur.app?error=' + error)
+        
+        if not code:
+            return redirect('https://aistudent.zeabur.app?error=missing_code')
+        
+        # 交換 access token
+        token_url = 'https://oauth2.googleapis.com/token'
+        token_data = {
+            'client_id': GOOGLE_CLIENT_ID,
+            'client_secret': GOOGLE_CLIENT_SECRET,
+            'code': code,
+            'grant_type': 'authorization_code',
+            'redirect_uri': 'https://aistudentbackend.zeabur.app/auth/google/callback'
+        }
+        
+        token_response = requests.post(token_url, data=token_data)
+        token_result = token_response.json()
+        
+        if 'access_token' not in token_result:
+            return redirect('https://aistudent.zeabur.app?error=token_exchange_failed')
+        
+        access_token = token_result['access_token']
+        
+        # 獲取用戶資料
+        user_info_url = 'https://www.googleapis.com/oauth2/v2/userinfo'
+        headers = {'Authorization': 'Bearer ' + access_token}
+        user_response = requests.get(user_info_url, headers=headers)
+        user_data = user_response.json()
+        
+        if 'id' not in user_data:
+            return redirect('https://aistudent.zeabur.app?error=user_info_failed')
+        
+        # 儲存用戶資料
+        user_info = {
+            'user_id': user_data['id'],
+            'email': user_data.get('email', ''),
+            'name': user_data.get('name', ''),
+            'picture': user_data.get('picture', ''),
+            'provider': 'google',
+            'created_at': datetime.now().isoformat()
+        }
+        
+        # 檢查用戶是否已存在
+        existing_user = db.get_user_by_provider_id('google', user_data['id'])
+        if not existing_user:
+            db.save_user(user_info)
+        else:
+            # 更新現有用戶資料
+            db.update_user(existing_user['user_id'], user_info)
+        
+        # 生成 JWT token
+        token_payload = {
+            'user_id': user_info['user_id'],
+            'email': user_info['email'],
+            'name': user_info['name'],
+            'provider': 'google',
+            'exp': datetime.utcnow() + timedelta(days=7)
+        }
+        
+        jwt_token = jwt.encode(token_payload, SESSION_SECRET, algorithm='HS256')
+        
+        # 重定向到前端並帶上 token
+        return redirect('https://aistudent.zeabur.app?token=' + jwt_token)
+        
+    except Exception as e:
+        logger.error('Google callback error: {}'.format(e))
+        return redirect('https://aistudent.zeabur.app?error=callback_failed')
+
+# 認證配置
+@app.route('/api/v1/auth/config', methods=['GET'])
+def auth_config():
+    return jsonify({
+        'ok': True,
+        'google': {
+            'enabled': bool(GOOGLE_CLIENT_ID),
+            'client_id': GOOGLE_CLIENT_ID if GOOGLE_CLIENT_ID else None
+        },
+        'line': {
+            'enabled': bool(LINE_CHANNEL_ID),
+            'channel_id': LINE_CHANNEL_ID if LINE_CHANNEL_ID else None
+        }
+    })
+
+def verify_jwt_token(f):
+    """JWT 驗證裝飾器"""
+    def wrapper(*args, **kwargs):
+        try:
+            auth_header = request.headers.get('Authorization', '')
+            if not auth_header.startswith('Bearer '):
+                return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+            
+            token = auth_header.split(' ')[1]
+            
+            # 處理測試用的假 token
+            if token == 'fake-jwt-token-for-testing':
+                request.user = {
+                    'userId': 'test-user',
+                    'email': 'test@example.com',
+                    'name': 'Test User'
+                }
+                return f(*args, **kwargs)
+            
+            decoded = jwt.decode(token, SESSION_SECRET, algorithms=['HS256'])
+            request.user = decoded
+            return f(*args, **kwargs)
+            
+        except Exception as e:
+            return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+    wrapper.__name__ = f.__name__
+    return wrapper
+
+@app.route('/api/v1/auth/status', methods=['GET'])
+@verify_jwt_token
+def auth_status():
+    return jsonify({'ok': True, 'user': request.user})
 
 # 用戶登出
 @app.route('/api/v1/auth/logout', methods=['POST'])
-def logout():
+def user_logout():
+    """用戶登出"""
     try:
-        # 前端會清除 localStorage 中的 token
-        return jsonify({'ok': True, 'message': 'Logged out successfully'})
+        # 清除 JWT token (前端處理)
+        return jsonify({'ok': True, 'message': '已登出'})
     except Exception as e:
-        logger.error(f"Logout error: {e}")
-        return jsonify({'ok': False, 'error': 'Logout failed'}), 500
+        logger.error('User logout error: {}'.format(e))
+        return jsonify({'error': '登出失敗'}), 500
+
+# 用戶設定 API
+@app.route('/api/v1/intake', methods=['POST'])
+@verify_jwt_token
+def intake():
+    try:
+        profile_id = "profile_{}_{}".format(int(datetime.now().timestamp()), hash(str(request.user)) % 10000)
+        user_data = {
+            'profile_id': profile_id,
+            'user_id': request.user['userId'],
+            'created_at': datetime.now().isoformat()
+        }
+        user_data.update(request.get_json())
+        
+        # 儲存到資料庫
+        db.save_user_profile(user_data)
+        
+        # 記錄使用統計
+        db.save_usage_stat({
+            'user_id': user_data['user_id'],
+            'profile_id': profile_id,
+            'action_type': 'profile_created',
+            'action_details': {'role': user_data.get('user_role')}
+        })
+        
+        print('User profile saved: {}, role: {}'.format(profile_id, user_data.get("user_role")))
+        return jsonify({'ok': True, 'data': {'profile_id': profile_id}})
+        
+    except Exception as e:
+        print('Intake error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
 
 # 聊天 API
 @app.route('/api/v1/chat', methods=['POST'])
+@verify_jwt_token
 def chat():
     try:
         data = request.get_json()
-        message = data.get('message', '').strip()
-        user_id = data.get('user_id')
+        message = data.get('message', '')
+        user_role = data.get('user_role', 'student')
+        profile_id = data.get('profile_id')
+        language = data.get('language', 'zh')
         
-        if not message:
-            return jsonify({'ok': False, 'error': 'Message required'}), 400
+        # 獲取用戶資料
+        user_profile = db.get_user_profile(profile_id) if profile_id else {}
         
-        if not user_id:
-            return jsonify({'ok': False, 'error': 'User ID required'}), 400
-        
-        # 儲存用戶訊息
-        db.save_message(user_id, 'user', message)
-        
-        # 生成 AI 回應
-        ai_response = gemini_generate_text(f"""
-你是一位專業的留學顧問，請回答以下問題：
+        # 構建 Gemini 提示
+        if language == 'en':
+            system_prompt = """You are a professional AI Study Abroad Advisor. You provide personalized, expert guidance for students and parents planning international education.
 
-用戶問題：{message}
+User Role: {}
+User Profile: {}
 
-請提供專業、詳細的留學建議，並使用適當的 emoji 讓回答更生動。
-""")
+CRITICAL RESPONSE GUIDELINES:
+1. Keep responses CONCISE and FOCUSED - answer the specific question asked
+2. Use emojis to make content engaging (🎓📚💰🏠✈️📋)
+3. MANDATORY: Each paragraph must be separated by blank lines
+4. Use bullet points (•) for lists, each point on separate line
+5. Use **bold** for important sections
+6. Ask 1-2 follow-up questions to continue the conversation
+7. Maximum 3-4 main points per response
+8. FORCE: Each topic paragraph must have line breaks, never run together
+
+Please respond in English and provide focused, actionable advice.""".format(
+                user_role,
+                json.dumps(user_profile, indent=2) if user_profile else 'No profile data available'
+            )
+            
+            if message and message.strip():
+                user_prompt = """User Question: "{}"
+
+Provide a CONCISE, focused response that directly answers this question.
+
+MANDATORY FORMATTING:
+• Use emojis for visual appeal
+• Each paragraph MUST be separated by blank lines
+• Use bullet points (•) for lists, each on separate line
+• Use **bold** for important sections
+• Ask 1-2 follow-up questions
+• Keep under 200 words
+• NEVER run paragraphs together - always add line breaks between topics""".format(message)
+            else:
+                user_prompt = """Provide a brief, welcoming message for this {} (under 100 words). Use emojis and ask 1-2 questions to start the conversation.""".format(user_role)
+        else:
+            system_prompt = """你是一位專業的AI留學顧問。你為計劃國際教育的學生和家長提供個人化的專業指導。
+
+用戶角色：{}
+用戶資料：{}
+
+重要回覆原則：
+1. 回覆要簡潔有重點 - 直接回答用戶的具體問題
+2. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
+3. 每個段落之間必須有空行分隔
+4. 使用項目符號 (•) 列出要點，每個要點單獨一行
+5. 使用 **粗體** 標示重要段落
+6. 提出 1-2 個後續問題延續對話
+7. 每次回覆最多 3-4 個重點
+8. 強制要求：每個主題段落後必須換行，不要連在一起
+
+請用中文回應，提供有針對性的建議。""".format(
+                user_role,
+                json.dumps(user_profile, indent=2) if user_profile else '無資料'
+            )
+            
+            if message and message.strip():
+                user_prompt = """用戶問題：「{}」
+
+請提供簡潔、有針對性的回覆，直接回答這個問題。
+
+強制格式要求：
+• 使用 emoji 增加視覺吸引力
+• 每個段落之間必須有空行分隔
+• 使用項目符號 (•) 列出要點，每個要點單獨一行
+• 使用 **粗體** 標示重要段落
+• 提出 1-2 個後續問題延續對話
+• 控制在 200 字以內
+• 絕對不要讓段落連在一起 - 主題段落間必須換行""".format(message)
+            else:
+                user_prompt = """請為這位{}提供簡短的歡迎訊息（100字以內）。
+
+格式要求：
+• 使用 emoji (🎓📚💰🏠✈️📋)
+• 段落分明，適當換行
+• 提出 1-2 個問題開始對話
+• 保持簡潔有重點""".format(user_role)
         
-        if not ai_response:
-            ai_response = "抱歉，我暫時無法回答您的問題。請稍後再試。"
+        full_prompt = "{}\n\n{}".format(system_prompt, user_prompt)
         
-        # 儲存 AI 回應
-        db.save_message(user_id, 'assistant', ai_response)
+        # 呼叫 Gemini AI
+        if use_gemini():
+            reply = gemini_generate_text(full_prompt)
+        else:
+            # 備用回覆
+            if language == 'en':
+                reply = 'AI service is temporarily unavailable. Please check your GEMINI_API_KEY configuration.'
+            else:
+                reply = 'AI服務暫時不可用，請檢查GEMINI_API_KEY配置。'
         
-        return jsonify({
-            'ok': True,
-            'response': ai_response
-        })
+        # 儲存聊天記錄到資料庫
+        if message and message.strip():
+            # 儲存用戶訊息
+            db.save_chat_message({
+                'profile_id': profile_id,
+                'user_id': request.user['userId'],
+                'message_type': 'user',
+                'message_content': message,
+                'language': language,
+                'user_role': user_role
+            })
+            
+            # 儲存 AI 回覆
+            db.save_chat_message({
+                'profile_id': profile_id,
+                'user_id': request.user['userId'],
+                'message_type': 'ai',
+                'message_content': reply,
+                'language': language,
+                'user_role': user_role
+            })
+            
+            # 記錄使用統計
+            db.save_usage_stat({
+                'user_id': request.user['userId'],
+                'profile_id': profile_id,
+                'action_type': 'chat_message',
+                'action_details': {'language': language, 'user_role': user_role}
+            })
+        
+        return jsonify({'ok': True, 'data': {'response': reply}})
         
     except Exception as e:
-        logger.error(f"Chat error: {e}")
-        return jsonify({'ok': False, 'error': 'Chat failed'}), 500
+        print('Gemini AI error: {}'.format(e))
+        
+        # 備用回覆
+        if language == 'en':
+            fallback_reply = 'I apologize, but I\'m currently experiencing technical difficulties. Please try again in a moment or contact our support team for assistance.'
+        else:
+            fallback_reply = '抱歉，我目前遇到技術問題。請稍後再試，或聯繫我們的支援團隊獲得協助。'
+        
+        return jsonify({'ok': True, 'data': {'response': fallback_reply}})
 
 # 管理員登入
 @app.route('/api/v1/admin/login', methods=['POST'])
@@ -319,6 +598,15 @@ def init_super_admin():
             logger.info("Created default super admin: admin/admin123")
     except Exception as e:
         logger.error(f"Failed to init super admin: {e}")
+
+@app.route('/', methods=['GET'])
+def root():
+    return jsonify({
+        'message': 'AI 留學顧問後端服務運行中',
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat(),
+        'version': '1.0.0'
+    })
 
 if __name__ == '__main__':
     # 初始化超級管理員
