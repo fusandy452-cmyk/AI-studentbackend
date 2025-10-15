@@ -42,13 +42,20 @@ def use_gemini():
 def gemini_generate_text(prompt):
     """使用 Gemini AI 生成文本"""
     if not use_gemini():
+        logger.warning("Gemini API key not configured")
         return ""
     
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel(GEMINI_MODEL)
         res = model.generate_content(prompt)
-        return res.text if res.text else ""
+        
+        if res.text:
+            logger.info(f"Gemini response generated successfully, length: {len(res.text)}")
+            return res.text
+        else:
+            logger.warning("Gemini returned empty response")
+            return ""
     except Exception as e:
         logger.error(f"Gemini API error: {e}")
         return ""
@@ -540,8 +547,11 @@ def chat():
         profile_id = data.get('profile_id')
         language = data.get('language', 'zh')
         
+        logger.info(f"Chat request - profile_id: {profile_id}, user_role: {user_role}, message length: {len(message)}")
+        
         # 獲取用戶資料
         user_profile = db.get_user_profile(profile_id) if profile_id else {}
+        logger.info(f"User profile retrieved: {bool(user_profile)}")
         
         # 構建 Gemini 提示
         if language == 'en':
@@ -626,14 +636,25 @@ MANDATORY FORMATTING:
         full_prompt = "{}\n\n{}".format(system_prompt, user_prompt)
         
         # 呼叫 Gemini AI
+        logger.info(f"Calling Gemini AI with prompt length: {len(full_prompt)}")
         if use_gemini():
             reply = gemini_generate_text(full_prompt)
+            if not reply or not reply.strip():
+                # 如果 Gemini 返回空回應，使用備用回覆
+                logger.warning("Gemini returned empty response, using fallback")
+                if language == 'en':
+                    reply = 'I apologize, but I\'m currently experiencing technical difficulties. Please try again in a moment or contact our support team for assistance.'
+                else:
+                    reply = '抱歉，我目前遇到技術問題。請稍後再試，或聯繫我們的支援團隊獲得協助。'
         else:
             # 備用回覆
+            logger.warning("Gemini API key not configured, using fallback")
             if language == 'en':
                 reply = 'AI service is temporarily unavailable. Please check your GEMINI_API_KEY configuration.'
             else:
                 reply = 'AI服務暫時不可用，請檢查GEMINI_API_KEY配置。'
+        
+        logger.info(f"Generated reply length: {len(reply) if reply else 0}")
         
         # 儲存聊天記錄到資料庫
         if message and message.strip():
