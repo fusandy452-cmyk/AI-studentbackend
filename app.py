@@ -17,6 +17,8 @@ import html
 import logging
 import hashlib
 import secrets
+import threading
+import schedule
 
 app = Flask(__name__)
 CORS(app, origins=["https://aistudent.zeabur.app"])
@@ -915,6 +917,87 @@ def backup_database():
         logger.error('Backup error: {}'.format(e))
         return jsonify({'error': 'Backup failed', 'details': str(e)}), 500
 
+@app.route('/api/v1/admin/export', methods=['GET'])
+def export_data():
+    """匯出所有資料"""
+    try:
+        export_data = db.export_all_data()
+        if export_data:
+            return jsonify({
+                'ok': True,
+                'data': export_data
+            })
+        else:
+            return jsonify({'error': 'Export failed'}), 500
+    except Exception as e:
+        logger.error('Export data error: {}'.format(e))
+        return jsonify({'error': 'Export failed', 'details': str(e)}), 500
+
+@app.route('/api/v1/admin/import', methods=['POST'])
+def import_data():
+    """匯入資料"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        if db.import_data(data):
+            return jsonify({'ok': True, 'message': 'Data imported successfully'})
+        else:
+            return jsonify({'error': 'Import failed'}), 500
+    except Exception as e:
+        logger.error('Import data error: {}'.format(e))
+        return jsonify({'error': 'Import failed', 'details': str(e)}), 500
+
+@app.route('/api/v1/admin/backup/status', methods=['GET'])
+def backup_status():
+    """獲取備份狀態"""
+    try:
+        import os
+        import glob
+        
+        backup_dirs = ['/data/backups', '/tmp/backups']
+        backup_files = []
+        
+        for backup_dir in backup_dirs:
+            if os.path.exists(backup_dir):
+                files = glob.glob(os.path.join(backup_dir, 'auto_backup_*.json'))
+                for file_path in files:
+                    stat = os.stat(file_path)
+                    backup_files.append({
+                        'filename': os.path.basename(file_path),
+                        'path': file_path,
+                        'size': stat.st_size,
+                        'created': datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                        'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
+                    })
+        
+        # 按修改時間排序
+        backup_files.sort(key=lambda x: x['modified'], reverse=True)
+        
+        return jsonify({
+            'ok': True,
+            'backups': backup_files,
+            'total_backups': len(backup_files),
+            'backup_dirs': backup_dirs
+        })
+        
+    except Exception as e:
+        logger.error('Backup status error: {}'.format(e))
+        return jsonify({'error': 'Failed to get backup status', 'details': str(e)}), 500
+
+@app.route('/api/v1/admin/backup/manual', methods=['POST'])
+def manual_backup():
+    """手動觸發備份"""
+    try:
+        if auto_backup():
+            return jsonify({'ok': True, 'message': 'Manual backup completed successfully'})
+        else:
+            return jsonify({'error': 'Manual backup failed'}), 500
+    except Exception as e:
+        logger.error('Manual backup error: {}'.format(e))
+        return jsonify({'error': 'Manual backup failed', 'details': str(e)}), 500
+
 @app.route('/api/v1/monitor/status', methods=['GET'])
 def monitor_status():
     """系統監控狀態 API"""
@@ -1326,8 +1409,140 @@ def init_super_admin():
     except Exception as e:
         logger.error('Init super admin error: {}'.format(e))
 
+# 自動備份功能
+def auto_backup():
+    """自動備份資料庫"""
+    try:
+        logger.info('Starting automatic backup...')
+        
+        # 匯出資料
+        export_data = db.export_all_data()
+        if not export_data:
+            logger.error('Failed to export data for backup')
+            return False
+        
+        # 儲存備份到檔案
+        import os
+        backup_dir = '/data/backups' if os.path.exists('/data') else '/tmp/backups'
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_file = os.path.join(backup_dir, f'auto_backup_{timestamp}.json')
+        
+        with open(backup_file, 'w', encoding='utf-8') as f:
+            json.dump(export_data, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f'Automatic backup completed: {backup_file}')
+        
+        # 清理舊備份（保留最近7天）
+        cleanup_old_backups(backup_dir)
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f'Automatic backup failed: {e}')
+        return False
+
+def cleanup_old_backups(backup_dir, days_to_keep=7):
+    """清理舊備份檔案"""
+    try:
+        import os
+        import glob
+        from datetime import datetime, timedelta
+        
+        cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+        
+        backup_files = glob.glob(os.path.join(backup_dir, 'auto_backup_*.json'))
+        
+        for backup_file in backup_files:
+            file_time = datetime.fromtimestamp(os.path.getmtime(backup_file))
+            if file_time < cutoff_date:
+                os.remove(backup_file)
+                logger.info(f'Removed old backup: {backup_file}')
+                
+    except Exception as e:
+        logger.error(f'Failed to cleanup old backups: {e}')
+
+def start_backup_scheduler():
+    """啟動備份排程器"""
+    try:
+        # 設定每日備份（凌晨2點）
+        schedule.every().day.at("02:00").do(auto_backup)
+        
+        # 設定每小時備份（作為備用）
+        schedule.every().hour.do(auto_backup)
+        
+        def run_scheduler():
+            while True:
+                schedule.run_pending()
+                time.sleep(60)  # 每分鐘檢查一次
+        
+        # 在背景執行排程器
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+        
+        logger.info('Backup scheduler started')
+        
+    except Exception as e:
+        logger.error(f'Failed to start backup scheduler: {e}')
+
+# 資料恢復功能
+def auto_restore():
+    """自動恢復資料（如果資料庫為空）"""
+    try:
+        # 檢查是否有現有資料
+        users = db.get_all_users()
+        if len(users) > 0:
+            logger.info('Database has existing data, skipping restore')
+            return True
+        
+        # 尋找最新的備份檔案
+        import os
+        import glob
+        
+        backup_dirs = ['/data/backups', '/tmp/backups']
+        latest_backup = None
+        latest_time = 0
+        
+        for backup_dir in backup_dirs:
+            if os.path.exists(backup_dir):
+                backup_files = glob.glob(os.path.join(backup_dir, 'auto_backup_*.json'))
+                for backup_file in backup_files:
+                    file_time = os.path.getmtime(backup_file)
+                    if file_time > latest_time:
+                        latest_time = file_time
+                        latest_backup = backup_file
+        
+        if latest_backup:
+            logger.info(f'Found backup file: {latest_backup}')
+            
+            # 讀取備份檔案
+            with open(latest_backup, 'r', encoding='utf-8') as f:
+                backup_data = json.load(f)
+            
+            # 恢復資料
+            if db.import_data(backup_data):
+                logger.info('Data restored successfully from backup')
+                return True
+            else:
+                logger.error('Failed to restore data from backup')
+                return False
+        else:
+            logger.info('No backup files found, starting with empty database')
+            return True
+            
+    except Exception as e:
+        logger.error(f'Auto restore failed: {e}')
+        return False
+
 # 在應用啟動時初始化超級管理員
 init_super_admin()
+
+# 嘗試自動恢復資料
+auto_restore()
+
+# 啟動自動備份
+start_backup_scheduler()
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
