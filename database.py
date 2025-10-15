@@ -87,6 +87,43 @@ class DatabaseManager:
             )
         ''')
         
+        # 留學進度追蹤表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS study_progress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                progress_category TEXT NOT NULL,
+                progress_item TEXT NOT NULL,
+                status TEXT NOT NULL,
+                completion_percentage INTEGER DEFAULT 0,
+                notes TEXT,
+                target_date DATE,
+                completed_date DATE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (profile_id) REFERENCES user_profiles (profile_id),
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
+        # 聊天摘要表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS chat_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                summary_period TEXT NOT NULL,
+                summary_content TEXT NOT NULL,
+                key_topics TEXT,
+                action_items TEXT,
+                advisor_notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (profile_id) REFERENCES user_profiles (profile_id),
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
         conn.commit()
         conn.close()
         print('Database initialized successfully')
@@ -339,6 +376,161 @@ class DatabaseManager:
         conn.close()
         return stats
     
+    def save_study_progress(self, progress_data):
+        """儲存留學進度"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO study_progress (
+                    profile_id, user_id, progress_category, progress_item,
+                    status, completion_percentage, notes, target_date, completed_date, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                progress_data.get('profile_id'),
+                progress_data.get('user_id'),
+                progress_data.get('progress_category'),
+                progress_data.get('progress_item'),
+                progress_data.get('status'),
+                progress_data.get('completion_percentage', 0),
+                progress_data.get('notes'),
+                progress_data.get('target_date'),
+                progress_data.get('completed_date'),
+                datetime.now().isoformat()
+            ))
+            conn.commit()
+            return True
+        except Exception as e:
+            print('Error saving study progress: {}'.format(e))
+            return False
+        finally:
+            conn.close()
+    
+    def get_study_progress(self, profile_id=None):
+        """獲取留學進度"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        if profile_id:
+            cursor.execute('''
+                SELECT * FROM study_progress WHERE profile_id = ?
+                ORDER BY created_at DESC
+            ''', (profile_id,))
+        else:
+            cursor.execute('''
+                SELECT * FROM study_progress ORDER BY created_at DESC
+            ''')
+        
+        progress = []
+        for row in cursor.fetchall():
+            progress.append({
+                'id': row[0],
+                'profile_id': row[1],
+                'user_id': row[2],
+                'progress_category': row[3],
+                'progress_item': row[4],
+                'status': row[5],
+                'completion_percentage': row[6],
+                'notes': row[7],
+                'target_date': row[8],
+                'completed_date': row[9],
+                'created_at': row[10],
+                'updated_at': row[11]
+            })
+        
+        conn.close()
+        return progress
+    
+    def save_chat_summary(self, summary_data):
+        """儲存聊天摘要"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO chat_summaries (
+                    profile_id, user_id, summary_period, summary_content,
+                    key_topics, action_items, advisor_notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                summary_data.get('profile_id'),
+                summary_data.get('user_id'),
+                summary_data.get('summary_period'),
+                summary_data.get('summary_content'),
+                summary_data.get('key_topics'),
+                summary_data.get('action_items'),
+                summary_data.get('advisor_notes')
+            ))
+            conn.commit()
+            return True
+        except Exception as e:
+            print('Error saving chat summary: {}'.format(e))
+            return False
+        finally:
+            conn.close()
+    
+    def get_chat_summaries(self, profile_id=None):
+        """獲取聊天摘要"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        if profile_id:
+            cursor.execute('''
+                SELECT * FROM chat_summaries WHERE profile_id = ?
+                ORDER BY created_at DESC
+            ''', (profile_id,))
+        else:
+            cursor.execute('''
+                SELECT * FROM chat_summaries ORDER BY created_at DESC
+            ''')
+        
+        summaries = []
+        for row in cursor.fetchall():
+            summaries.append({
+                'id': row[0],
+                'profile_id': row[1],
+                'user_id': row[2],
+                'summary_period': row[3],
+                'summary_content': row[4],
+                'key_topics': row[5],
+                'action_items': row[6],
+                'advisor_notes': row[7],
+                'created_at': row[8]
+            })
+        
+        conn.close()
+        return summaries
+    
+    def get_user_role_summary(self):
+        """獲取用戶角色摘要"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                up.user_role,
+                COUNT(*) as count,
+                AVG(up.budget) as avg_budget,
+                GROUP_CONCAT(DISTINCT up.citizenship) as countries,
+                MAX(up.created_at) as latest_activity
+            FROM user_profiles up
+            GROUP BY up.user_role
+        ''')
+        
+        summary = []
+        for row in cursor.fetchall():
+            summary.append({
+                'role': row[0],
+                'count': row[1],
+                'avg_budget': row[2],
+                'countries': row[3].split(',') if row[3] else [],
+                'latest_activity': row[4]
+            })
+        
+        conn.close()
+        return summary
+
     def export_user_data(self, user_id=None):
         """匯出用戶資料"""
         data = {
@@ -346,6 +538,9 @@ class DatabaseManager:
             'profiles': self.get_user_profiles(user_id),
             'messages': self.get_chat_messages(limit=1000),
             'stats': self.get_usage_stats(days=90),
+            'study_progress': self.get_study_progress(),
+            'chat_summaries': self.get_chat_summaries(),
+            'role_summary': self.get_user_role_summary(),
             'export_time': datetime.now().isoformat()
         }
         return data
