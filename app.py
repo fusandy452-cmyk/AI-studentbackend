@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import google.generativeai as genai
 from google.oauth2 import id_token
 from google.auth.transport import requests
+from database import DatabaseManager
 
 app = Flask(__name__)
 CORS(app, origins=["https://aistudent.zeabur.app"])
@@ -104,6 +105,9 @@ def retrieve_relevant_knowledge(query, knowledge_base, max_chars=1500):
 # 載入知識庫
 KNOWLEDGE_BASE = load_knowledge_base()
 
+# 初始化資料庫
+db = DatabaseManager()
+
 def format_ai_response(text, language):
     """強制格式化 AI 回覆，確保段落分明"""
     if not text:
@@ -181,6 +185,16 @@ def verify_google_token():
             'avatar': idinfo.get('picture')
         }
         
+        # 儲存用戶資料到資料庫
+        db.save_user(user)
+        
+        # 記錄使用統計
+        db.save_usage_stat({
+            'user_id': user['userId'],
+            'action_type': 'login',
+            'action_details': {'method': 'google'}
+        })
+        
         # 簽發 JWT
         payload = user.copy()
         payload['exp'] = datetime.utcnow() + timedelta(days=7)
@@ -237,7 +251,19 @@ def intake():
         }
         user_data.update(request.get_json())
         
+        # 儲存到記憶體（保持向後相容）
         user_profiles[profile_id] = user_data
+        
+        # 儲存到資料庫
+        db.save_user_profile(user_data)
+        
+        # 記錄使用統計
+        db.save_usage_stat({
+            'user_id': user_data['user_id'],
+            'profile_id': profile_id,
+            'action_type': 'profile_created',
+            'action_details': {'role': user_data.get('user_role')}
+        })
         
         print('User profile saved: {}, role: {}'.format(profile_id, user_data.get("user_role")))
         return jsonify({'ok': True, 'data': {'profile_id': profile_id}})
@@ -368,6 +394,36 @@ MANDATORY FORMATTING:
             else:
                 reply = 'AI服務暫時不可用，請檢查GEMINI_API_KEY配置。'
         
+        # 儲存聊天記錄到資料庫
+        if message and message.strip():
+            # 儲存用戶訊息
+            db.save_chat_message({
+                'profile_id': profile_id,
+                'user_id': request.user['userId'],
+                'message_type': 'user',
+                'message_content': message,
+                'language': language,
+                'user_role': user_role
+            })
+            
+            # 儲存 AI 回覆
+            db.save_chat_message({
+                'profile_id': profile_id,
+                'user_id': request.user['userId'],
+                'message_type': 'ai',
+                'message_content': reply,
+                'language': language,
+                'user_role': user_role
+            })
+            
+            # 記錄使用統計
+            db.save_usage_stat({
+                'user_id': request.user['userId'],
+                'profile_id': profile_id,
+                'action_type': 'chat_message',
+                'action_details': {'language': language, 'user_role': user_role}
+            })
+        
         return jsonify({'ok': True, 'data': {'response': reply}})
         
     except Exception as e:
@@ -380,6 +436,116 @@ MANDATORY FORMATTING:
             fallback_reply = '抱歉，我目前遇到技術問題。請稍後再試，或聯繫我們的支援團隊獲得協助。'
         
         return jsonify({'ok': True, 'data': {'response': fallback_reply}})
+
+# ======== 後台管理 API ========
+
+@app.route('/api/v1/admin/users', methods=['GET'])
+@verify_jwt_token
+def admin_get_users():
+    """獲取所有用戶資料"""
+    try:
+        users = db.get_all_users()
+        return jsonify({'ok': True, 'data': users})
+    except Exception as e:
+        print('Admin get users error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/profiles', methods=['GET'])
+@verify_jwt_token
+def admin_get_profiles():
+    """獲取所有用戶設定資料"""
+    try:
+        user_id = request.args.get('user_id')
+        profiles = db.get_user_profiles(user_id)
+        return jsonify({'ok': True, 'data': profiles})
+    except Exception as e:
+        print('Admin get profiles error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/messages', methods=['GET'])
+@verify_jwt_token
+def admin_get_messages():
+    """獲取聊天記錄"""
+    try:
+        profile_id = request.args.get('profile_id')
+        limit = int(request.args.get('limit', 100))
+        messages = db.get_chat_messages(profile_id, limit)
+        return jsonify({'ok': True, 'data': messages})
+    except Exception as e:
+        print('Admin get messages error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/stats', methods=['GET'])
+@verify_jwt_token
+def admin_get_stats():
+    """獲取使用統計"""
+    try:
+        days = int(request.args.get('days', 30))
+        stats = db.get_usage_stats(days)
+        return jsonify({'ok': True, 'data': stats})
+    except Exception as e:
+        print('Admin get stats error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/export', methods=['GET'])
+@verify_jwt_token
+def admin_export_data():
+    """匯出用戶資料"""
+    try:
+        user_id = request.args.get('user_id')
+        data = db.export_user_data(user_id)
+        return jsonify({'ok': True, 'data': data})
+    except Exception as e:
+        print('Admin export error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/dashboard', methods=['GET'])
+@verify_jwt_token
+def admin_dashboard():
+    """後台儀表板數據"""
+    try:
+        # 獲取基本統計
+        users = db.get_all_users()
+        profiles = db.get_user_profiles()
+        messages = db.get_chat_messages(limit=1000)
+        stats = db.get_usage_stats(days=30)
+        
+        # 計算統計數據
+        total_users = len(users)
+        total_profiles = len(profiles)
+        total_messages = len(messages)
+        
+        # 按角色統計
+        student_count = len([p for p in profiles if p.get('user_role') == 'student'])
+        parent_count = len([p for p in profiles if p.get('user_role') == 'parent'])
+        
+        # 按語言統計
+        zh_messages = len([m for m in messages if m.get('language') == 'zh'])
+        en_messages = len([m for m in messages if m.get('language') == 'en'])
+        
+        # 最近活動
+        recent_users = users[:10]  # 最近10個用戶
+        recent_messages = messages[:20]  # 最近20條訊息
+        
+        dashboard_data = {
+            'summary': {
+                'total_users': total_users,
+                'total_profiles': total_profiles,
+                'total_messages': total_messages,
+                'student_count': student_count,
+                'parent_count': parent_count,
+                'zh_messages': zh_messages,
+                'en_messages': en_messages
+            },
+            'recent_users': recent_users,
+            'recent_messages': recent_messages,
+            'usage_stats': stats
+        }
+        
+        return jsonify({'ok': True, 'data': dashboard_data})
+    except Exception as e:
+        print('Admin dashboard error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
 
 @app.route('/', methods=['GET'])
 def root():
