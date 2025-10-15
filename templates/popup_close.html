@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登入處理中...</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            max-width: 400px;
+            width: 100%;
+        }
+        .success {
+            color: #10b981;
+        }
+        .error {
+            color: #ef4444;
+        }
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .message {
+            font-size: 18px;
+            margin: 20px 0;
+        }
+        .details {
+            font-size: 14px;
+            color: #666;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        {% if success %}
+            <div class="success">
+                <div class="spinner"></div>
+                <div class="message">登入成功！</div>
+                <div class="details">正在關閉視窗並返回主頁面...</div>
+            </div>
+        {% else %}
+            <div class="error">
+                <div class="message">登入失敗</div>
+                <div class="details">
+                    {% if error == 'no_id_token' %}
+                        未收到有效的認證資訊
+                    {% elif error == 'token_verification_failed' %}
+                        認證驗證失敗
+                    {% elif error == 'token_exchange_failed' %}
+                        認證交換失敗
+                    {% elif error == 'internal_server_error' %}
+                        伺服器內部錯誤
+                    {% elif error == 'unexpected_error' %}
+                        未預期的錯誤
+                    {% else %}
+                        {{ error or '未知錯誤' }}
+                    {% endif %}
+                </div>
+                <div style="margin-top: 20px;">
+                    <button onclick="window.close()" style="background: #ef4444; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
+                        關閉視窗
+                    </button>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+
+    <script>
+        {% if success %}
+            // 將登入資訊傳遞給父視窗
+            try {
+                if (window.opener && !window.opener.closed) {
+                    window.opener.postMessage({
+                        type: 'google_login_success',
+                        token: '{{ token }}',
+                        user: {{ user | tojson | safe }}
+                    }, '*');
+                    
+                    // 等待一下讓訊息發送完成
+                    setTimeout(() => {
+                        window.close();
+                    }, 1000);
+                } else {
+                    // 如果沒有父視窗，重定向到主頁面
+                    window.location.href = '{{ frontend_url }}?login=success';
+                }
+            } catch (error) {
+                console.error('Error sending message to parent:', error);
+                // 如果出錯，重定向到主頁面
+                window.location.href = '{{ frontend_url }}?login=success';
+            }
+        {% else %}
+            // 登入失敗，通知父視窗
+            try {
+                if (window.opener && !window.opener.closed) {
+                    window.opener.postMessage({
+                        type: 'google_login_error',
+                        error: '{{ error }}'
+                    }, '*');
+                }
+            } catch (error) {
+                console.error('Error sending error message to parent:', error);
+            }
+        {% endif %}
+    </script>
+</body>
+</html>

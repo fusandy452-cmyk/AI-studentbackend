@@ -55,7 +55,12 @@ def gemini_generate_text(prompt):
         return ""
 
 # 初始化資料庫
-db = DatabaseManager()
+try:
+    db = DatabaseManager()
+    logger.info("Database initialized successfully")
+except Exception as e:
+    logger.error(f"Database initialization failed: {e}")
+    db = None
 
 # 速率限制
 rate_limit_storage = defaultdict(list)
@@ -125,9 +130,13 @@ def health_check():
         # 檢查資料庫連接
         db_status = "healthy"
         try:
-            users_count = db.get_users_count()
-            profiles_count = db.get_profiles_count()
-            messages_count = db.get_messages_count()
+            if db:
+                users_count = db.get_users_count()
+                profiles_count = db.get_profiles_count()
+                messages_count = db.get_messages_count()
+            else:
+                db_status = "database_not_initialized"
+                users_count = profiles_count = messages_count = 0
         except Exception as e:
             db_status = f"error: {str(e)}"
             users_count = profiles_count = messages_count = 0
@@ -320,6 +329,131 @@ def google_callback():
     except Exception as e:
         logger.error('Google callback error: {}'.format(e))
         return redirect('https://aistudent.zeabur.app?error=callback_failed')
+
+# LINE 登入相關
+@app.route('/api/v1/auth/line/login', methods=['GET'])
+def line_login():
+    """獲取 LINE 登入 URL"""
+    try:
+        # LINE Login 配置
+        line_client_id = os.getenv('LINE_CLIENT_ID')
+        line_redirect_uri = f"{API_BASE_URL}/auth/line/callback"
+        line_state = 'line_login_' + str(int(time.time()))
+        
+        if not line_client_id:
+            return jsonify({'ok': False, 'error': 'LINE_CLIENT_ID not configured'}), 500
+        
+        # 構建 LINE Login URL
+        line_auth_url = (
+            f"https://access.line.me/oauth2/v2.1/authorize?"
+            f"response_type=code&"
+            f"client_id={line_client_id}&"
+            f"redirect_uri={line_redirect_uri}&"
+            f"state={line_state}&"
+            f"scope=profile%20openid%20email"
+        )
+        
+        return jsonify({
+            'ok': True,
+            'login_url': line_auth_url,
+            'state': line_state
+        })
+        
+    except Exception as e:
+        logger.error(f'LINE login URL generation error: {e}')
+        return jsonify({'ok': False, 'error': 'Failed to generate LINE login URL'}), 500
+
+@app.route('/auth/line/callback', methods=['GET'])
+def line_callback():
+    """處理 LINE OAuth 回調"""
+    try:
+        code = request.args.get('code')
+        state = request.args.get('state')
+        error = request.args.get('error')
+        
+        if error:
+            logger.error(f'LINE callback error: {error}')
+            return redirect(f'{FRONTEND_URL}/?error=line_{error}')
+        
+        if not code:
+            logger.error('LINE callback: No authorization code received')
+            return redirect(f'{FRONTEND_URL}/?error=line_no_code')
+        
+        # 交換 access token
+        line_client_id = os.getenv('LINE_CLIENT_ID')
+        line_client_secret = os.getenv('LINE_CLIENT_SECRET')
+        line_redirect_uri = f"{API_BASE_URL}/auth/line/callback"
+        
+        if not line_client_id or not line_client_secret:
+            logger.error('LINE credentials not configured')
+            return redirect(f'{FRONTEND_URL}/?error=line_config_error')
+        
+        # 獲取 access token
+        token_url = 'https://api.line.me/oauth2/v2.1/token'
+        token_data = {
+            'grant_type': 'authorization_code',
+            'code': code,
+            'redirect_uri': line_redirect_uri,
+            'client_id': line_client_id,
+            'client_secret': line_client_secret
+        }
+        
+        token_response = requests.post(token_url, data=token_data)
+        token_result = token_response.json()
+        
+        if 'access_token' not in token_result:
+            logger.error(f'LINE token exchange failed: {token_result}')
+            return redirect(f'{FRONTEND_URL}/?error=line_token_failed')
+        
+        access_token = token_result['access_token']
+        
+        # 獲取用戶資料
+        profile_url = 'https://api.line.me/v2/profile'
+        headers = {'Authorization': f'Bearer {access_token}'}
+        profile_response = requests.get(profile_url, headers=headers)
+        profile_data = profile_response.json()
+        
+        if 'userId' not in profile_data:
+            logger.error(f'LINE profile fetch failed: {profile_data}')
+            return redirect(f'{FRONTEND_URL}/?error=line_profile_failed')
+        
+        # 構建用戶資訊
+        user_info = {
+            'user_id': profile_data['userId'],
+            'email': profile_data.get('email', ''),
+            'name': profile_data.get('displayName', ''),
+            'picture': profile_data.get('pictureUrl', ''),
+            'provider': 'line',
+            'created_at': datetime.now().isoformat()
+        }
+        
+        # 檢查用戶是否已存在
+        existing_user = db.get_user_by_provider_id('line', profile_data['userId'])
+        if not existing_user:
+            db.save_user(user_info)
+            logger.info(f'New LINE user created: {user_info["name"]} ({user_info["user_id"]})')
+        else:
+            # 更新現有用戶資料
+            db.update_user(existing_user['user_id'], user_info)
+            logger.info(f'Existing LINE user logged in: {user_info["name"]} ({user_info["user_id"]})')
+        
+        # 生成 JWT token
+        token_payload = {
+            'user_id': user_info['user_id'],
+            'email': user_info['email'],
+            'name': user_info['name'],
+            'provider': 'line',
+            'exp': datetime.utcnow() + timedelta(days=7)
+        }
+        
+        jwt_token = jwt.encode(token_payload, SESSION_SECRET, algorithm='HS256')
+        
+        # 重定向到前端
+        return redirect(f'{FRONTEND_URL}/?token={jwt_token}&provider=line')
+        
+    except Exception as e:
+        logger.error(f'LINE callback error: {e}')
+        return redirect(f'{FRONTEND_URL}/?error=line_callback_failed')
 
 # 認證配置
 @app.route('/api/v1/auth/config', methods=['GET'])
