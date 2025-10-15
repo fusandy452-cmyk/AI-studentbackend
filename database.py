@@ -5,8 +5,21 @@ from datetime import datetime
 import json
 
 class DatabaseManager:
-    def __init__(self, db_path='ai_study_advisor.db'):
-        self.db_path = db_path
+    def __init__(self, db_path=None):
+        # 使用環境變數或預設路徑
+        if db_path is None:
+            import os
+            # 優先使用 Zeabur 持久化目錄
+            persistent_dir = os.getenv('ZEABUR_PERSISTENT_DIR', '/data')
+            # 如果沒有持久化目錄，使用 /tmp 但會定期備份
+            if not os.path.exists(persistent_dir):
+                persistent_dir = '/tmp'
+                print('Warning: Using /tmp directory, data may be lost on restart')
+            # 確保目錄存在
+            os.makedirs(persistent_dir, exist_ok=True)
+            self.db_path = os.path.join(persistent_dir, 'ai_study_advisor.db')
+        else:
+            self.db_path = db_path
         self.init_database()
     
     def get_connection(self):
@@ -124,9 +137,38 @@ class DatabaseManager:
             )
         ''')
         
+        # 建立管理員表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admins (
+                admin_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                email TEXT UNIQUE NOT NULL,
+                role TEXT NOT NULL DEFAULT 'advisor',
+                permissions TEXT NOT NULL DEFAULT 'read_only',
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP,
+                created_by TEXT
+            )
+        ''')
+        
+        # 建立管理員會話表
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admin_sessions (
+                session_id TEXT PRIMARY KEY,
+                admin_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                ip_address TEXT,
+                user_agent TEXT,
+                FOREIGN KEY (admin_id) REFERENCES admins (admin_id)
+            )
+        ''')
+        
         conn.commit()
         conn.close()
-        print('Database initialized successfully')
+        print('Database initialized successfully at: {}'.format(self.db_path))
     
     def save_user(self, user_data):
         """儲存用戶資料"""
@@ -544,3 +586,332 @@ class DatabaseManager:
             'export_time': datetime.now().isoformat()
         }
         return data
+    
+    # 管理員相關方法
+    def create_admin(self, username, password_hash, email, role='advisor', permissions='read_only', created_by=None):
+        """建立管理員帳號"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO admins (username, password_hash, email, role, permissions, created_by)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (username, password_hash, email, role, permissions, created_by))
+            
+            conn.commit()
+            return True
+        except Exception as e:
+            print('Create admin error: {}'.format(e))
+            return False
+        finally:
+            conn.close()
+    
+    def get_admin_by_username(self, username):
+        """根據用戶名獲取管理員"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM admins WHERE username = ? AND is_active = 1', (username,))
+        result = cursor.fetchone()
+        
+        conn.close()
+        
+        if result:
+            return {
+                'admin_id': result[0],
+                'username': result[1],
+                'password_hash': result[2],
+                'email': result[3],
+                'role': result[4],
+                'permissions': result[5],
+                'is_active': result[6],
+                'created_at': result[7],
+                'last_login': result[8],
+                'created_by': result[9]
+            }
+        return None
+    
+    def get_admin_by_id(self, admin_id):
+        """根據ID獲取管理員"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM admins WHERE admin_id = ? AND is_active = 1', (admin_id,))
+        result = cursor.fetchone()
+        
+        conn.close()
+        
+        if result:
+            return {
+                'admin_id': result[0],
+                'username': result[1],
+                'password_hash': result[2],
+                'email': result[3],
+                'role': result[4],
+                'permissions': result[5],
+                'is_active': result[6],
+                'created_at': result[7],
+                'last_login': result[8],
+                'created_by': result[9]
+            }
+        return None
+    
+    def get_all_admins(self):
+        """獲取所有管理員"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM admins WHERE is_active = 1 ORDER BY created_at DESC')
+        results = cursor.fetchall()
+        
+        conn.close()
+        
+        admins = []
+        for result in results:
+            admins.append({
+                'admin_id': result[0],
+                'username': result[1],
+                'email': result[3],
+                'role': result[4],
+                'permissions': result[5],
+                'is_active': result[6],
+                'created_at': result[7],
+                'last_login': result[8],
+                'created_by': result[9]
+            })
+        
+        return admins
+    
+    def update_admin_login(self, admin_id, ip_address=None):
+        """更新管理員最後登入時間"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE admins SET last_login = CURRENT_TIMESTAMP 
+            WHERE admin_id = ?
+        ''', (admin_id,))
+        
+        conn.commit()
+        conn.close()
+        return True
+    
+    def create_admin_session(self, session_id, admin_id, expires_at, ip_address=None, user_agent=None):
+        """建立管理員會話"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                INSERT INTO admin_sessions (session_id, admin_id, expires_at, ip_address, user_agent)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (session_id, admin_id, expires_at, ip_address, user_agent))
+            
+            conn.commit()
+            return True
+        except Exception as e:
+            print('Create admin session error: {}'.format(e))
+            return False
+        finally:
+            conn.close()
+    
+    def get_admin_session(self, session_id):
+        """獲取管理員會話"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT s.*, a.username, a.role, a.permissions 
+            FROM admin_sessions s
+            JOIN admins a ON s.admin_id = a.admin_id
+            WHERE s.session_id = ? AND s.expires_at > CURRENT_TIMESTAMP AND a.is_active = 1
+        ''', (session_id,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            return {
+                'session_id': result[0],
+                'admin_id': result[1],
+                'created_at': result[2],
+                'expires_at': result[3],
+                'ip_address': result[4],
+                'user_agent': result[5],
+                'username': result[6],
+                'role': result[7],
+                'permissions': result[8]
+            }
+        return None
+    
+    def delete_admin_session(self, session_id):
+        """刪除管理員會話"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('DELETE FROM admin_sessions WHERE session_id = ?', (session_id,))
+        conn.commit()
+        conn.close()
+        return True
+    
+    def update_admin_permissions(self, admin_id, permissions):
+        """更新管理員權限"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE admins SET permissions = ? WHERE admin_id = ?
+        ''', (permissions, admin_id))
+        
+        conn.commit()
+        conn.close()
+        return True
+    
+    def export_all_data(self):
+        """匯出所有資料"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # 獲取所有資料
+            users = self.get_all_users()
+            profiles = self.get_user_profiles()
+            messages = self.get_chat_messages(limit=10000)
+            usage_stats = self.get_usage_stats(limit=10000)
+            admins = self.get_all_admins()
+            
+            # 獲取資料庫結構
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [row[0] for row in cursor.fetchall()]
+            
+            export_data = {
+                'export_time': datetime.now().isoformat(),
+                'database_version': '1.0',
+                'tables': tables,
+                'data': {
+                    'users': users,
+                    'profiles': profiles,
+                    'messages': messages,
+                    'usage_stats': usage_stats,
+                    'admins': admins
+                },
+                'counts': {
+                    'users': len(users),
+                    'profiles': len(profiles),
+                    'messages': len(messages),
+                    'usage_stats': len(usage_stats),
+                    'admins': len(admins)
+                }
+            }
+            
+            conn.close()
+            return export_data
+            
+        except Exception as e:
+            print('Export data error: {}'.format(e))
+            return None
+    
+    def import_data(self, import_data):
+        """匯入資料"""
+        try:
+            if not import_data or 'data' not in import_data:
+                return False
+            
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # 匯入用戶資料
+            if 'users' in import_data['data']:
+                for user in import_data['data']['users']:
+                    try:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO users 
+                            (user_id, email, name, picture, provider, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        ''', (
+                            user.get('user_id'),
+                            user.get('email'),
+                            user.get('name'),
+                            user.get('picture'),
+                            user.get('provider'),
+                            user.get('created_at')
+                        ))
+                    except Exception as e:
+                        print('Import user error: {}'.format(e))
+            
+            # 匯入用戶檔案
+            if 'profiles' in import_data['data']:
+                for profile in import_data['data']['profiles']:
+                    try:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO user_profiles 
+                            (profile_id, user_id, user_role, target_country, target_major, 
+                             current_education_level, target_degree, budget, citizenship, 
+                             target_intake_time, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            profile.get('profile_id'),
+                            profile.get('user_id'),
+                            profile.get('user_role'),
+                            profile.get('target_country'),
+                            profile.get('target_major'),
+                            profile.get('current_education_level'),
+                            profile.get('target_degree'),
+                            profile.get('budget'),
+                            profile.get('citizenship'),
+                            profile.get('target_intake_time'),
+                            profile.get('created_at')
+                        ))
+                    except Exception as e:
+                        print('Import profile error: {}'.format(e))
+            
+            # 匯入聊天記錄
+            if 'messages' in import_data['data']:
+                for message in import_data['data']['messages']:
+                    try:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO chat_messages 
+                            (message_id, user_id, message_text, message_type, created_at)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (
+                            message.get('message_id'),
+                            message.get('user_id'),
+                            message.get('message_text'),
+                            message.get('message_type'),
+                            message.get('created_at')
+                        ))
+                    except Exception as e:
+                        print('Import message error: {}'.format(e))
+            
+            # 匯入管理員資料
+            if 'admins' in import_data['data']:
+                for admin in import_data['data']['admins']:
+                    try:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO admins 
+                            (admin_id, username, password_hash, email, role, permissions, 
+                             is_active, created_at, last_login, created_by)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (
+                            admin.get('admin_id'),
+                            admin.get('username'),
+                            admin.get('password_hash'),
+                            admin.get('email'),
+                            admin.get('role'),
+                            admin.get('permissions'),
+                            admin.get('is_active'),
+                            admin.get('created_at'),
+                            admin.get('last_login'),
+                            admin.get('created_by')
+                        ))
+                    except Exception as e:
+                        print('Import admin error: {}'.format(e))
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            print('Import data error: {}'.format(e))
+            return False
