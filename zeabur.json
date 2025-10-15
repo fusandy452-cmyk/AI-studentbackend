@@ -1,8 +1,8 @@
 {
   "name": "ai-study-abroad-advisor",
   "type": "python",
-  "buildCommand": "pip install -r requirements.txt",
-  "startCommand": "gunicorn --bind 0.0.0.0:$PORT app:app",
+  "buildCommand": "pip install --upgrade pip && pip install -r requirements.txt",
+  "startCommand": "gunicorn --bind 0.0.0.0:$PORT app:app --timeout 120 --workers 1",
   "rootDirectory": ".",
   "domains": [
     "aistudentbackend.zeabur.app"
@@ -14,5 +14,9 @@
   "persistentStorage": {
     "mountPath": "/data",
     "size": "1Gi"
+  },
+  "env": {
+    "PYTHONPATH": ".",
+    "PYTHONUNBUFFERED": "1"
   }
 }

@@ -408,6 +408,54 @@ class DatabaseManager:
         conn.close()
         return profiles
     
+    def get_user_profile(self, profile_id):
+        """根據 profile_id 獲取單個用戶設定資料"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                SELECT * FROM user_profiles WHERE profile_id = ?
+            ''', (profile_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                # 解析 countries JSON
+                countries = []
+                if row[14]:  # countries 欄位
+                    try:
+                        countries = json.loads(row[14])
+                    except:
+                        countries = []
+                
+                return {
+                    'profile_id': row[0],
+                    'user_id': row[1],
+                    'created_at': row[2],
+                    'user_role': row[3],
+                    'student_name': row[4],
+                    'student_email': row[5],
+                    'parent_name': row[6],
+                    'parent_email': row[7],
+                    'relationship': row[8],
+                    'child_name': row[9],
+                    'child_email': row[10],
+                    'citizenship': row[11],
+                    'gpa': row[12],
+                    'degree': row[13],
+                    'countries': countries,
+                    'budget': row[15],
+                    'target_intake': row[16],
+                    'created_at': row[17],
+                    'updated_at': row[18]
+                }
+            return None
+        except Exception as e:
+            print(f'Error getting user profile: {e}')
+            return None
+        finally:
+            conn.close()
+    
     def get_chat_messages(self, profile_id=None, limit=100):
         """獲取聊天記錄"""
         conn = self.get_connection()
