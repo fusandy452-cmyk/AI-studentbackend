@@ -405,6 +405,40 @@ def line_callback():
         logger.error(f'LINE callback error: {e}')
         return redirect(f'{FRONTEND_URL}/?error=line_callback_failed')
 
+# 用戶資料檢索
+@app.route('/api/v1/user/profile/<profile_id>', methods=['GET'])
+def get_user_profile_data(profile_id):
+    """獲取用戶設定資料"""
+    try:
+        # 從 JWT token 中獲取用戶資訊
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'ok': False, 'error': 'Missing or invalid authorization header'}), 401
+        
+        token = auth_header.split(' ')[1]
+        try:
+            payload = jwt.decode(token, SESSION_SECRET, algorithms=['HS256'])
+            user_id = payload.get('user_id')
+        except jwt.ExpiredSignatureError:
+            return jsonify({'ok': False, 'error': 'Token expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'ok': False, 'error': 'Invalid token'}), 401
+        
+        # 獲取用戶設定資料
+        profile_data = db.get_user_profile(profile_id)
+        if not profile_data:
+            return jsonify({'ok': False, 'error': 'Profile not found'}), 404
+        
+        # 驗證 profile 是否屬於該用戶
+        if profile_data.get('user_id') != user_id:
+            return jsonify({'ok': False, 'error': 'Access denied'}), 403
+        
+        return jsonify({'ok': True, 'data': profile_data})
+        
+    except Exception as e:
+        logger.error(f'Error retrieving user profile: {e}')
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
 # 認證配置
 @app.route('/api/v1/auth/config', methods=['GET'])
 def auth_config():
