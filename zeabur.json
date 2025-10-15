@@ -10,5 +10,9 @@
   "healthCheck": {
     "path": "/health",
     "interval": 30
+  },
+  "persistentStorage": {
+    "mountPath": "/data",
+    "size": "1Gi"
   }
 }
