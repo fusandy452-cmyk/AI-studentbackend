@@ -104,6 +104,39 @@ def retrieve_relevant_knowledge(query, knowledge_base, max_chars=1500):
 # 載入知識庫
 KNOWLEDGE_BASE = load_knowledge_base()
 
+def format_ai_response(text, language):
+    """強制格式化 AI 回覆，確保段落分明"""
+    if not text:
+        return text
+    
+    # 基本清理
+    text = text.strip()
+    
+    # 強制在特定標點後添加換行
+    import re
+    
+    # 在句號、問號、驚嘆號後添加雙換行（段落分隔）
+    text = re.sub(r'([。！？])\s*', r'\1\n\n', text)
+    text = re.sub(r'([.!?])\s*', r'\1\n\n', text)
+    
+    # 在冒號後添加單換行
+    text = re.sub(r'([：:])\s*', r'\1\n', text)
+    text = re.sub(r'([：:])\s*', r'\1\n', text)
+    
+    # 確保項目符號後有換行
+    text = re.sub(r'([•·])\s*', r'\1 ', text)
+    
+    # 清理多餘的空白行
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # 確保每行開頭沒有多餘空格
+    lines = text.split('\n')
+    formatted_lines = []
+    for line in lines:
+        formatted_lines.append(line.strip())
+    
+    return '\n'.join(formatted_lines)
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
@@ -326,6 +359,8 @@ MANDATORY FORMATTING:
         # 呼叫 Gemini AI
         if use_gemini():
             reply = gemini_generate_text(full_prompt)
+            # 強制格式化回覆
+            reply = format_ai_response(reply, language)
         else:
             # 備用回覆
             if language == 'en':
