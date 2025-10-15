@@ -6,7 +6,7 @@ import jwt
 import json
 from datetime import datetime, timedelta
 import google.generativeai as genai
-# Google OAuth 相關導入已移除，使用標準 requests 庫
+import requests  # 用於 Google OAuth 和 LINE OAuth 的 HTTP 請求
 from database import DatabaseManager
 import urllib.parse
 import time
@@ -209,12 +209,10 @@ def google_callback():
         
         # 儲存用戶資料
         user_info = {
-            'user_id': user_data['id'],
+            'userId': user_data['id'],  # 使用 userId 而不是 user_id
             'email': user_data.get('email', ''),
             'name': user_data.get('name', ''),
-            'picture': user_data.get('picture', ''),
-            'provider': 'google',
-            'created_at': datetime.now().isoformat()
+            'avatar': user_data.get('picture', ''),  # 使用 avatar 而不是 picture
         }
         
         # 檢查用戶是否已存在
@@ -223,11 +221,11 @@ def google_callback():
             db.save_user(user_info)
         else:
             # 更新現有用戶資料
-            db.update_user(existing_user['user_id'], user_info)
+            db.update_user(user_data['id'], user_info)
         
         # 生成 JWT token
         token_payload = {
-            'user_id': user_info['user_id'],
+            'user_id': user_info['userId'],
             'email': user_info['email'],
             'name': user_info['name'],
             'provider': 'google',
@@ -256,10 +254,10 @@ def google_callback():
                             type: 'GOOGLE_LOGIN_SUCCESS',
                             token: '{jwt_token}',
                             user: {{
-                                userId: '{user_info['user_id']}',
+                                userId: '{user_info['userId']}',
                                 email: '{user_info['email']}',
                                 name: '{user_info['name']}',
-                                avatar: '{user_info['picture']}'
+                                avatar: '{user_info['avatar']}'
                             }}
                         }}, 'https://aistudent.zeabur.app');
                         window.close();
@@ -373,27 +371,25 @@ def line_callback():
         
         # 構建用戶資訊
         user_info = {
-            'user_id': profile_data['userId'],
+            'userId': profile_data['userId'],
             'email': profile_data.get('email', ''),
             'name': profile_data.get('displayName', ''),
-            'picture': profile_data.get('pictureUrl', ''),
-            'provider': 'line',
-            'created_at': datetime.now().isoformat()
+            'avatar': profile_data.get('pictureUrl', ''),
         }
         
         # 檢查用戶是否已存在
         existing_user = db.get_user_by_provider_id('line', profile_data['userId'])
         if not existing_user:
             db.save_user(user_info)
-            logger.info(f'New LINE user created: {user_info["name"]} ({user_info["user_id"]})')
+            logger.info(f'New LINE user created: {user_info["name"]} ({user_info["userId"]})')
         else:
             # 更新現有用戶資料
-            db.update_user(existing_user['user_id'], user_info)
-            logger.info(f'Existing LINE user logged in: {user_info["name"]} ({user_info["user_id"]})')
+            db.update_user(profile_data['userId'], user_info)
+            logger.info(f'Existing LINE user logged in: {user_info["name"]} ({user_info["userId"]})')
         
         # 生成 JWT token
         token_payload = {
-            'user_id': user_info['user_id'],
+            'user_id': user_info['userId'],
             'email': user_info['email'],
             'name': user_info['name'],
             'provider': 'line',

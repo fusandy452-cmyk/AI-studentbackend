@@ -194,6 +194,54 @@ class DatabaseManager:
         finally:
             conn.close()
     
+    def get_user_by_provider_id(self, provider, provider_id):
+        """根據提供者和提供者ID獲取用戶"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                SELECT * FROM users 
+                WHERE user_id = ?
+            ''', (provider_id,))
+            
+            row = cursor.fetchone()
+            if row:
+                columns = [description[0] for description in cursor.description]
+                return dict(zip(columns, row))
+            return None
+        except Exception as e:
+            print(f"Error getting user by provider ID: {e}")
+            return None
+        finally:
+            conn.close()
+    
+    def update_user(self, user_id, user_data):
+        """更新用戶資料"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute('''
+                UPDATE users 
+                SET email = ?, name = ?, avatar = ?, updated_at = ?
+                WHERE user_id = ?
+            ''', (
+                user_data.get('email'),
+                user_data.get('name'),
+                user_data.get('avatar', ''),
+                datetime.now().isoformat(),
+                user_id
+            ))
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            print(f"Error updating user: {e}")
+            return False
+        finally:
+            conn.close()
+    
     def save_user_profile(self, profile_data):
         """儲存用戶設定資料"""
         conn = self.get_connection()
