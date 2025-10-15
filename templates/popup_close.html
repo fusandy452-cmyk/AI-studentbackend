@@ -100,10 +100,10 @@
                         user: {{ user | tojson | safe }}
                     }, '*');
                     
-                    // 等待一下讓訊息發送完成
+                    // 等待一下讓訊息發送完成，給用戶時間看到成功訊息
                     setTimeout(() => {
                         window.close();
-                    }, 1000);
+                    }, 2000);
                 } else {
                     // 如果沒有父視窗，重定向到主頁面
                     window.location.href = '{{ frontend_url }}?login=success';
