@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 留學顧問 - 後台管理</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .loading { opacity: 0.6; pointer-events: none; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans antialiased">
+    <div class="min-h-screen">
+        <!-- 側邊欄 -->
+        <div class="fixed inset-y-0 left-0 w-64 bg-gray-800 text-white">
+            <div class="p-6">
+                <h1 class="text-xl font-bold">AI 留學顧問</h1>
+                <p class="text-gray-300 text-sm">後台管理系統</p>
+            </div>
+            <nav class="mt-8">
+                <a href="#dashboard" onclick="showSection('dashboard')" class="nav-item block px-6 py-3 hover:bg-gray-700 transition-colors">
+                    📊 儀表板
+                </a>
+                <a href="#users" onclick="showSection('users')" class="nav-item block px-6 py-3 hover:bg-gray-700 transition-colors">
+                    👥 用戶管理
+                </a>
+                <a href="#profiles" onclick="showSection('profiles')" class="nav-item block px-6 py-3 hover:bg-gray-700 transition-colors">
+                    📋 用戶設定
+                </a>
+                <a href="#messages" onclick="showSection('messages')" class="nav-item block px-6 py-3 hover:bg-gray-700 transition-colors">
+                    💬 聊天記錄
+                </a>
+                <a href="#stats" onclick="showSection('stats')" class="nav-item block px-6 py-3 hover:bg-gray-700 transition-colors">
+                    📈 使用統計
+                </a>
+                <a href="#export" onclick="showSection('export')" class="nav-item block px-6 py-3 hover:bg-gray-700 transition-colors">
+                    📤 資料匯出
+                </a>
+            </nav>
+        </div>
+
+        <!-- 主內容區 -->
+        <div class="ml-64">
+            <!-- 頂部導航 -->
+            <header class="bg-white shadow-sm border-b border-gray-200 p-4">
+                <div class="flex justify-between items-center">
+                    <h2 id="page-title" class="text-2xl font-semibold text-gray-800">儀表板</h2>
+                    <div class="flex items-center space-x-4">
+                        <span class="text-sm text-gray-500" id="last-updated">最後更新: --</span>
+                        <button onclick="refreshData()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
+                            🔄 重新整理
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <!-- 內容區域 -->
+            <main class="p-6">
+                <!-- 儀表板 -->
+                <div id="dashboard-section" class="section">
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                            <div class="flex items-center">
+                                <div class="p-3 bg-blue-100 rounded-full">
+                                    <span class="text-2xl">👥</span>
+                                </div>
+                                <div class="ml-4">
+                                    <p class="text-sm text-gray-500">總用戶數</p>
+                                    <p class="text-2xl font-bold text-gray-800" id="total-users">--</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                            <div class="flex items-center">
+                                <div class="p-3 bg-green-100 rounded-full">
+                                    <span class="text-2xl">📋</span>
+                                </div>
+                                <div class="ml-4">
+                                    <p class="text-sm text-gray-500">用戶設定</p>
+                                    <p class="text-2xl font-bold text-gray-800" id="total-profiles">--</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                            <div class="flex items-center">
+                                <div class="p-3 bg-yellow-100 rounded-full">
+                                    <span class="text-2xl">💬</span>
+                                </div>
+                                <div class="ml-4">
+                                    <p class="text-sm text-gray-500">聊天訊息</p>
+                                    <p class="text-2xl font-bold text-gray-800" id="total-messages">--</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                            <div class="flex items-center">
+                                <div class="p-3 bg-purple-100 rounded-full">
+                                    <span class="text-2xl">🎓</span>
+                                </div>
+                                <div class="ml-4">
+                                    <p class="text-sm text-gray-500">學生用戶</p>
+                                    <p class="text-2xl font-bold text-gray-800" id="student-count">--</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                            <h3 class="text-lg font-semibold mb-4">最近用戶</h3>
+                            <div id="recent-users" class="space-y-3">
+                                <!-- 動態載入 -->
+                            </div>
+                        </div>
+                        <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                            <h3 class="text-lg font-semibold mb-4">最近訊息</h3>
+                            <div id="recent-messages" class="space-y-3">
+                                <!-- 動態載入 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 用戶管理 -->
+                <div id="users-section" class="section hidden">
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                        <div class="p-6 border-b border-gray-200">
+                            <h3 class="text-lg font-semibold">用戶列表</h3>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用戶</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">設定數</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">訊息數</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">註冊時間</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="users-table" class="bg-white divide-y divide-gray-200">
+                                    <!-- 動態載入 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 用戶設定 -->
+                <div id="profiles-section" class="section hidden">
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                        <div class="p-6 border-b border-gray-200">
+                            <h3 class="text-lg font-semibold">用戶設定列表</h3>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full">
+                                <thead class="bg-gray-50">
+                                    <tr>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">設定ID</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用戶角色</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">姓名</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">目標國家</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">預算</th>
+                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">建立時間</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="profiles-table" class="bg-white divide-y divide-gray-200">
+                                    <!-- 動態載入 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 聊天記錄 -->
+                <div id="messages-section" class="section hidden">
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                        <div class="p-6 border-b border-gray-200">
+                            <h3 class="text-lg font-semibold">聊天記錄</h3>
+                        </div>
+                        <div class="p-6">
+                            <div id="messages-list" class="space-y-4">
+                                <!-- 動態載入 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 使用統計 -->
+                <div id="stats-section" class="section hidden">
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                        <h3 class="text-lg font-semibold mb-4">使用統計</h3>
+                        <canvas id="stats-chart" width="400" height="200"></canvas>
+                    </div>
+                </div>
+
+                <!-- 資料匯出 -->
+                <div id="export-section" class="section hidden">
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                        <h3 class="text-lg font-semibold mb-4">資料匯出</h3>
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">匯出選項</label>
+                                <select id="export-type" class="w-full p-3 border border-gray-300 rounded-lg">
+                                    <option value="all">所有資料</option>
+                                    <option value="users">用戶資料</option>
+                                    <option value="profiles">用戶設定</option>
+                                    <option value="messages">聊天記錄</option>
+                                    <option value="stats">使用統計</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">特定用戶 (可選)</label>
+                                <input type="text" id="export-user-id" placeholder="輸入用戶ID" class="w-full p-3 border border-gray-300 rounded-lg">
+                            </div>
+                            <button onclick="exportData()" class="px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors">
+                                📤 匯出資料
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        // 全局變量
+        var currentSection = 'dashboard';
+        var apiBase = window.location.origin + '/api/v1';
+        var jwt = 'fake-jwt-token-for-testing'; // 管理員 token
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            showSection('dashboard');
+            loadDashboard();
+        });
+
+        // 顯示指定區段
+        function showSection(section) {
+            // 隱藏所有區段
+            var sections = document.querySelectorAll('.section');
+            for (var i = 0; i < sections.length; i++) {
+                sections[i].classList.add('hidden');
+            }
+
+            // 顯示指定區段
+            document.getElementById(section + '-section').classList.remove('hidden');
+            currentSection = section;
+
+            // 更新導航狀態
+            var navItems = document.querySelectorAll('.nav-item');
+            for (var j = 0; j < navItems.length; j++) {
+                navItems[j].classList.remove('bg-gray-700');
+            }
+            event.target.classList.add('bg-gray-700');
+
+            // 更新頁面標題
+            var titles = {
+                'dashboard': '儀表板',
+                'users': '用戶管理',
+                'profiles': '用戶設定',
+                'messages': '聊天記錄',
+                'stats': '使用統計',
+                'export': '資料匯出'
+            };
+            document.getElementById('page-title').textContent = titles[section];
+
+            // 載入對應資料
+            switch(section) {
+                case 'dashboard':
+                    loadDashboard();
+                    break;
+                case 'users':
+                    loadUsers();
+                    break;
+                case 'profiles':
+                    loadProfiles();
+                    break;
+                case 'messages':
+                    loadMessages();
+                    break;
+                case 'stats':
+                    loadStats();
+                    break;
+            }
+        }
+
+        // 載入儀表板資料
+        function loadDashboard() {
+            fetch(apiBase + '/admin/dashboard', {
+                headers: {
+                    'Authorization': 'Bearer ' + jwt
+                }
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.ok) {
+                    var data = result.data;
+                    var summary = data.summary;
+
+                    // 更新統計數字
+                    document.getElementById('total-users').textContent = summary.total_users;
+                    document.getElementById('total-profiles').textContent = summary.total_profiles;
+                    document.getElementById('total-messages').textContent = summary.total_messages;
+                    document.getElementById('student-count').textContent = summary.student_count;
+
+                    // 更新最近用戶
+                    var recentUsersHtml = '';
+                    for (var i = 0; i < data.recent_users.length; i++) {
+                        var user = data.recent_users[i];
+                        recentUsersHtml += '<div class="flex items-center space-x-3">';
+                        recentUsersHtml += '<div class="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">';
+                        recentUsersHtml += '<span class="text-sm">' + (user.name ? user.name.charAt(0) : 'U') + '</span>';
+                        recentUsersHtml += '</div>';
+                        recentUsersHtml += '<div>';
+                        recentUsersHtml += '<p class="text-sm font-medium">' + (user.name || 'Unknown') + '</p>';
+                        recentUsersHtml += '<p class="text-xs text-gray-500">' + formatDate(user.created_at) + '</p>';
+                        recentUsersHtml += '</div>';
+                        recentUsersHtml += '</div>';
+                    }
+                    document.getElementById('recent-users').innerHTML = recentUsersHtml;
+
+                    // 更新最近訊息
+                    var recentMessagesHtml = '';
+                    for (var j = 0; j < data.recent_messages.length; j++) {
+                        var message = data.recent_messages[j];
+                        recentMessagesHtml += '<div class="border-l-4 border-blue-500 pl-3">';
+                        recentMessagesHtml += '<p class="text-sm">' + (message.message_content ? message.message_content.substring(0, 50) + '...' : 'No content') + '</p>';
+                        recentMessagesHtml += '<p class="text-xs text-gray-500">' + formatDate(message.created_at) + ' • ' + message.message_type + '</p>';
+                        recentMessagesHtml += '</div>';
+                    }
+                    document.getElementById('recent-messages').innerHTML = recentMessagesHtml;
+
+                    updateLastUpdated();
+                }
+            })
+            .catch(function(error) {
+                console.error('Dashboard load error:', error);
+            });
+        }
+
+        // 載入用戶列表
+        function loadUsers() {
+            fetch(apiBase + '/admin/users', {
+                headers: {
+                    'Authorization': 'Bearer ' + jwt
+                }
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.ok) {
+                    var usersHtml = '';
+                    for (var i = 0; i < result.data.length; i++) {
+                        var user = result.data[i];
+                        usersHtml += '<tr>';
+                        usersHtml += '<td class="px-6 py-4 whitespace-nowrap">';
+                        usersHtml += '<div class="flex items-center">';
+                        usersHtml += '<div class="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center mr-3">';
+                        usersHtml += '<span class="text-sm">' + (user.name ? user.name.charAt(0) : 'U') + '</span>';
+                        usersHtml += '</div>';
+                        usersHtml += '<div>';
+                        usersHtml += '<div class="text-sm font-medium text-gray-900">' + (user.name || 'Unknown') + '</div>';
+                        usersHtml += '<div class="text-sm text-gray-500">ID: ' + user.user_id + '</div>';
+                        usersHtml += '</div>';
+                        usersHtml += '</div>';
+                        usersHtml += '</td>';
+                        usersHtml += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">' + (user.email || '--') + '</td>';
+                        usersHtml += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">' + user.profile_count + '</td>';
+                        usersHtml += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">' + user.message_count + '</td>';
+                        usersHtml += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">' + formatDate(user.created_at) + '</td>';
+                        usersHtml += '</tr>';
+                    }
+                    document.getElementById('users-table').innerHTML = usersHtml;
+                    updateLastUpdated();
+                }
+            })
+            .catch(function(error) {
+                console.error('Users load error:', error);
+            });
+        }
+
+        // 載入用戶設定列表
+        function loadProfiles() {
+            fetch(apiBase + '/admin/profiles', {
+                headers: {
+                    'Authorization': 'Bearer ' + jwt
+                }
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.ok) {
+                    var profilesHtml = '';
+                    for (var i = 0; i < result.data.length; i++) {
+                        var profile = result.data[i];
+                        var name = profile.student_name || profile.parent_name || 'Unknown';
+                        var countries = Array.isArray(profile.countries) ? profile.countries.join(', ') : profile.countries || '--';
+                        
+                        profilesHtml += '<tr>';
+                        profilesHtml += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">' + profile.profile_id + '</td>';
+                        profilesHtml += '<td class="px-6 py-4 whitespace-nowrap">';
+                        profilesHtml += '<span class="px-2 py-1 text-xs font-semibold rounded-full ' + (profile.user_role === 'student' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800') + '">';
+                        profilesHtml += profile.user_role === 'student' ? '學生' : '家長';
+                        profilesHtml += '</span>';
+                        profilesHtml += '</td>';
+                        profilesHtml += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">' + name + '</td>';
+                        profilesHtml += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">' + countries + '</td>';
+                        profilesHtml += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">' + (profile.budget ? '$' + profile.budget : '--') + '</td>';
+                        profilesHtml += '<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">' + formatDate(profile.created_at) + '</td>';
+                        profilesHtml += '</tr>';
+                    }
+                    document.getElementById('profiles-table').innerHTML = profilesHtml;
+                    updateLastUpdated();
+                }
+            })
+            .catch(function(error) {
+                console.error('Profiles load error:', error);
+            });
+        }
+
+        // 載入聊天記錄
+        function loadMessages() {
+            fetch(apiBase + '/admin/messages?limit=50', {
+                headers: {
+                    'Authorization': 'Bearer ' + jwt
+                }
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.ok) {
+                    var messagesHtml = '';
+                    for (var i = 0; i < result.data.length; i++) {
+                        var message = result.data[i];
+                        var isUser = message.message_type === 'user';
+                        
+                        messagesHtml += '<div class="flex ' + (isUser ? 'justify-end' : 'justify-start') + ' mb-4">';
+                        messagesHtml += '<div class="max-w-xs lg:max-w-md px-4 py-2 rounded-lg ' + (isUser ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-800') + '">';
+                        messagesHtml += '<p class="text-sm">' + (message.message_content || 'No content') + '</p>';
+                        messagesHtml += '<p class="text-xs mt-1 opacity-75">' + formatDate(message.created_at) + ' • ' + message.language + '</p>';
+                        messagesHtml += '</div>';
+                        messagesHtml += '</div>';
+                    }
+                    document.getElementById('messages-list').innerHTML = messagesHtml;
+                    updateLastUpdated();
+                }
+            })
+            .catch(function(error) {
+                console.error('Messages load error:', error);
+            });
+        }
+
+        // 載入使用統計
+        function loadStats() {
+            fetch(apiBase + '/admin/stats?days=30', {
+                headers: {
+                    'Authorization': 'Bearer ' + jwt
+                }
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.ok) {
+                    // 這裡可以添加圖表顯示邏輯
+                    console.log('Stats data:', result.data);
+                    updateLastUpdated();
+                }
+            })
+            .catch(function(error) {
+                console.error('Stats load error:', error);
+            });
+        }
+
+        // 匯出資料
+        function exportData() {
+            var exportType = document.getElementById('export-type').value;
+            var userId = document.getElementById('export-user-id').value;
+            
+            var url = apiBase + '/admin/export';
+            if (userId) {
+                url += '?user_id=' + userId;
+            }
+            
+            fetch(url, {
+                headers: {
+                    'Authorization': 'Bearer ' + jwt
+                }
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
+                if (result.ok) {
+                    // 下載 JSON 檔案
+                    var dataStr = JSON.stringify(result.data, null, 2);
+                    var dataBlob = new Blob([dataStr], {type: 'application/json'});
+                    var url = URL.createObjectURL(dataBlob);
+                    var link = document.createElement('a');
+                    link.href = url;
+                    link.download = 'ai_study_advisor_export_' + new Date().toISOString().split('T')[0] + '.json';
+                    link.click();
+                    URL.revokeObjectURL(url);
+                } else {
+                    alert('匯出失敗: ' + (result.error || 'Unknown error'));
+                }
+            })
+            .catch(function(error) {
+                console.error('Export error:', error);
+                alert('匯出失敗');
+            });
+        }
+
+        // 重新整理資料
+        function refreshData() {
+            showSection(currentSection);
+        }
+
+        // 更新最後更新時間
+        function updateLastUpdated() {
+            document.getElementById('last-updated').textContent = '最後更新: ' + new Date().toLocaleString('zh-TW');
+        }
+
+        // 格式化日期
+        function formatDate(dateString) {
+            if (!dateString) return '--';
+            var date = new Date(dateString);
+            return date.toLocaleString('zh-TW');
+        }
+    </script>
+</body>
+</html>
