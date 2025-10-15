@@ -506,7 +506,7 @@ def intake():
         profile_id = "profile_{}_{}".format(int(datetime.now().timestamp()), hash(str(request.user)) % 10000)
         user_data = {
             'profile_id': profile_id,
-            'user_id': request.user['userId'],
+            'user_id': request.user['user_id'],  # 修復字段名不匹配
             'created_at': datetime.now().isoformat()
         }
         user_data.update(request.get_json())
@@ -640,7 +640,7 @@ MANDATORY FORMATTING:
             # 儲存用戶訊息
             db.save_chat_message({
                 'profile_id': profile_id,
-                'user_id': request.user['userId'],
+                'user_id': request.user['user_id'],  # 修復字段名
                 'message_type': 'user',
                 'message_content': message,
                 'language': language,
@@ -650,7 +650,7 @@ MANDATORY FORMATTING:
             # 儲存 AI 回覆
             db.save_chat_message({
                 'profile_id': profile_id,
-                'user_id': request.user['userId'],
+                'user_id': request.user['user_id'],  # 修復字段名
                 'message_type': 'ai',
                 'message_content': reply,
                 'language': language,
@@ -659,13 +659,13 @@ MANDATORY FORMATTING:
             
             # 記錄使用統計
             db.save_usage_stat({
-                'user_id': request.user['userId'],
+                'user_id': request.user['user_id'],  # 修復字段名
                 'profile_id': profile_id,
                 'action_type': 'chat_message',
                 'action_details': {'language': language, 'user_role': user_role}
             })
         
-        return jsonify({'ok': True, 'data': {'response': reply}})
+        return jsonify({'ok': True, 'reply': reply})
         
     except Exception as e:
         print('Gemini AI error: {}'.format(e))
@@ -676,7 +676,7 @@ MANDATORY FORMATTING:
         else:
             fallback_reply = '抱歉，我目前遇到技術問題。請稍後再試，或聯繫我們的支援團隊獲得協助。'
         
-        return jsonify({'ok': True, 'data': {'response': fallback_reply}})
+        return jsonify({'ok': True, 'reply': fallback_reply})
 
 # 管理員登入
 @app.route('/api/v1/admin/login', methods=['POST'])
