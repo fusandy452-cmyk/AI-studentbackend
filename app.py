@@ -1,553 +1,789 @@
 # -*- coding: utf-8 -*-
-import sqlite3
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 import os
-from datetime import datetime
+import jwt
 import json
+from datetime import datetime, timedelta
+import google.generativeai as genai
+from google.oauth2 import id_token
+from google.auth.transport import requests
+from database import DatabaseManager
+import urllib.parse
 
-class DatabaseManager:
-    def __init__(self, db_path=None):
-        # 使用環境變數或預設路徑
-        if db_path is None:
-            import os
-            # 嘗試使用 Zeabur 的持久化目錄
-            persistent_dir = os.getenv('ZEABUR_PERSISTENT_DIR', '/tmp')
-            self.db_path = os.path.join(persistent_dir, 'ai_study_advisor.db')
-        else:
-            self.db_path = db_path
-        self.init_database()
-    
-    def get_connection(self):
-        """獲取資料庫連接"""
-        return sqlite3.connect(self.db_path)
-    
-    def init_database(self):
-        """初始化資料庫和表格"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # 用戶資料表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT UNIQUE NOT NULL,
-                email TEXT,
-                name TEXT,
-                avatar TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # 用戶設定資料表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_profiles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                profile_id TEXT UNIQUE NOT NULL,
-                user_id TEXT NOT NULL,
-                user_role TEXT NOT NULL,
-                student_name TEXT,
-                student_email TEXT,
-                parent_name TEXT,
-                parent_email TEXT,
-                relationship TEXT,
-                child_name TEXT,
-                child_email TEXT,
-                citizenship TEXT,
-                gpa REAL,
-                degree TEXT,
-                countries TEXT,
-                budget INTEGER,
-                target_intake TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
-            )
-        ''')
-        
-        # 聊天記錄表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS chat_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                profile_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                message_type TEXT NOT NULL,
-                message_content TEXT NOT NULL,
-                language TEXT DEFAULT 'zh',
-                user_role TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (profile_id) REFERENCES user_profiles (profile_id),
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
-            )
-        ''')
-        
-        # 使用統計表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS usage_stats (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT NOT NULL,
-                profile_id TEXT,
-                action_type TEXT NOT NULL,
-                action_details TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id),
-                FOREIGN KEY (profile_id) REFERENCES user_profiles (profile_id)
-            )
-        ''')
-        
-        # 留學進度追蹤表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS study_progress (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                profile_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                progress_category TEXT NOT NULL,
-                progress_item TEXT NOT NULL,
-                status TEXT NOT NULL,
-                completion_percentage INTEGER DEFAULT 0,
-                notes TEXT,
-                target_date DATE,
-                completed_date DATE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (profile_id) REFERENCES user_profiles (profile_id),
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
-            )
-        ''')
-        
-        # 聊天摘要表
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS chat_summaries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                profile_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                summary_period TEXT NOT NULL,
-                summary_content TEXT NOT NULL,
-                key_topics TEXT,
-                action_items TEXT,
-                advisor_notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (profile_id) REFERENCES user_profiles (profile_id),
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-        print('Database initialized successfully at: {}'.format(self.db_path))
-    
-    def save_user(self, user_data):
-        """儲存用戶資料"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('''
-                INSERT OR REPLACE INTO users (user_id, email, name, avatar, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (
-                user_data['userId'],
-                user_data.get('email'),
-                user_data.get('name'),
-                user_data.get('avatar'),
-                datetime.now().isoformat()
-            ))
-            conn.commit()
-            return True
-        except Exception as e:
-            print('Error saving user: {}'.format(e))
-            return False
-        finally:
-            conn.close()
-    
-    def save_user_profile(self, profile_data):
-        """儲存用戶設定資料"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # 將 countries 列表轉換為 JSON 字串
-            countries_json = json.dumps(profile_data.get('countries', []))
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO user_profiles (
-                    profile_id, user_id, user_role, student_name, student_email,
-                    parent_name, parent_email, relationship, child_name, child_email,
-                    citizenship, gpa, degree, countries, budget, target_intake, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                profile_data['profile_id'],
-                profile_data['user_id'],
-                profile_data.get('user_role'),
-                profile_data.get('student_name'),
-                profile_data.get('student_email'),
-                profile_data.get('parent_name'),
-                profile_data.get('parent_email'),
-                profile_data.get('relationship'),
-                profile_data.get('child_name'),
-                profile_data.get('child_email'),
-                profile_data.get('citizenship'),
-                profile_data.get('gpa'),
-                profile_data.get('degree'),
-                countries_json,
-                profile_data.get('budget'),
-                profile_data.get('target_intake'),
-                datetime.now().isoformat()
-            ))
-            conn.commit()
-            return True
-        except Exception as e:
-            print('Error saving user profile: {}'.format(e))
-            return False
-        finally:
-            conn.close()
-    
-    def save_chat_message(self, message_data):
-        """儲存聊天記錄"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('''
-                INSERT INTO chat_messages (
-                    profile_id, user_id, message_type, message_content, language, user_role
-                ) VALUES (?, ?, ?, ?, ?, ?)
-            ''', (
-                message_data.get('profile_id'),
-                message_data.get('user_id'),
-                message_data.get('message_type'),  # 'user' or 'ai'
-                message_data.get('message_content'),
-                message_data.get('language', 'zh'),
-                message_data.get('user_role')
-            ))
-            conn.commit()
-            return True
-        except Exception as e:
-            print('Error saving chat message: {}'.format(e))
-            return False
-        finally:
-            conn.close()
-    
-    def save_usage_stat(self, stat_data):
-        """儲存使用統計"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            action_details = json.dumps(stat_data.get('action_details', {}))
-            cursor.execute('''
-                INSERT INTO usage_stats (user_id, profile_id, action_type, action_details)
-                VALUES (?, ?, ?, ?)
-            ''', (
-                stat_data.get('user_id'),
-                stat_data.get('profile_id'),
-                stat_data.get('action_type'),
-                action_details
-            ))
-            conn.commit()
-            return True
-        except Exception as e:
-            print('Error saving usage stat: {}'.format(e))
-            return False
-        finally:
-            conn.close()
-    
-    def get_all_users(self):
-        """獲取所有用戶資料"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT u.*, COUNT(up.id) as profile_count, COUNT(cm.id) as message_count
-            FROM users u
-            LEFT JOIN user_profiles up ON u.user_id = up.user_id
-            LEFT JOIN chat_messages cm ON u.user_id = cm.user_id
-            GROUP BY u.id
-            ORDER BY u.created_at DESC
-        ''')
-        
-        users = []
-        for row in cursor.fetchall():
-            users.append({
-                'id': row[0],
-                'user_id': row[1],
-                'email': row[2],
-                'name': row[3],
-                'avatar': row[4],
-                'created_at': row[5],
-                'updated_at': row[6],
-                'profile_count': row[7],
-                'message_count': row[8]
-            })
-        
-        conn.close()
-        return users
-    
-    def get_user_profiles(self, user_id=None):
-        """獲取用戶設定資料"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        if user_id:
-            cursor.execute('''
-                SELECT * FROM user_profiles WHERE user_id = ?
-                ORDER BY created_at DESC
-            ''', (user_id,))
-        else:
-            cursor.execute('''
-                SELECT * FROM user_profiles ORDER BY created_at DESC
-            ''')
-        
-        profiles = []
-        for row in cursor.fetchall():
-            countries = json.loads(row[13]) if row[13] else []
-            profiles.append({
-                'id': row[0],
-                'profile_id': row[1],
-                'user_id': row[2],
-                'user_role': row[3],
-                'student_name': row[4],
-                'student_email': row[5],
-                'parent_name': row[6],
-                'parent_email': row[7],
-                'relationship': row[8],
-                'child_name': row[9],
-                'child_email': row[10],
-                'citizenship': row[11],
-                'gpa': row[12],
-                'degree': row[13],
-                'countries': countries,
-                'budget': row[15],
-                'target_intake': row[16],
-                'created_at': row[17],
-                'updated_at': row[18]
-            })
-        
-        conn.close()
-        return profiles
-    
-    def get_chat_messages(self, profile_id=None, limit=100):
-        """獲取聊天記錄"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        if profile_id:
-            cursor.execute('''
-                SELECT * FROM chat_messages WHERE profile_id = ?
-                ORDER BY created_at DESC LIMIT ?
-            ''', (profile_id, limit))
-        else:
-            cursor.execute('''
-                SELECT * FROM chat_messages ORDER BY created_at DESC LIMIT ?
-            ''', (limit,))
-        
-        messages = []
-        for row in cursor.fetchall():
-            messages.append({
-                'id': row[0],
-                'profile_id': row[1],
-                'user_id': row[2],
-                'message_type': row[3],
-                'message_content': row[4],
-                'language': row[5],
-                'user_role': row[6],
-                'created_at': row[7]
-            })
-        
-        conn.close()
-        return messages
-    
-    def get_usage_stats(self, days=30):
-        """獲取使用統計"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT 
-                DATE(created_at) as date,
-                action_type,
-                COUNT(*) as count
-            FROM usage_stats 
-            WHERE created_at >= datetime('now', '-{} days')
-            GROUP BY DATE(created_at), action_type
-            ORDER BY date DESC
-        '''.format(days))
-        
-        stats = []
-        for row in cursor.fetchall():
-            stats.append({
-                'date': row[0],
-                'action_type': row[1],
-                'count': row[2]
-            })
-        
-        conn.close()
-        return stats
-    
-    def save_study_progress(self, progress_data):
-        """儲存留學進度"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('''
-                INSERT OR REPLACE INTO study_progress (
-                    profile_id, user_id, progress_category, progress_item,
-                    status, completion_percentage, notes, target_date, completed_date, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                progress_data.get('profile_id'),
-                progress_data.get('user_id'),
-                progress_data.get('progress_category'),
-                progress_data.get('progress_item'),
-                progress_data.get('status'),
-                progress_data.get('completion_percentage', 0),
-                progress_data.get('notes'),
-                progress_data.get('target_date'),
-                progress_data.get('completed_date'),
-                datetime.now().isoformat()
-            ))
-            conn.commit()
-            return True
-        except Exception as e:
-            print('Error saving study progress: {}'.format(e))
-            return False
-        finally:
-            conn.close()
-    
-    def get_study_progress(self, profile_id=None):
-        """獲取留學進度"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        if profile_id:
-            cursor.execute('''
-                SELECT * FROM study_progress WHERE profile_id = ?
-                ORDER BY created_at DESC
-            ''', (profile_id,))
-        else:
-            cursor.execute('''
-                SELECT * FROM study_progress ORDER BY created_at DESC
-            ''')
-        
-        progress = []
-        for row in cursor.fetchall():
-            progress.append({
-                'id': row[0],
-                'profile_id': row[1],
-                'user_id': row[2],
-                'progress_category': row[3],
-                'progress_item': row[4],
-                'status': row[5],
-                'completion_percentage': row[6],
-                'notes': row[7],
-                'target_date': row[8],
-                'completed_date': row[9],
-                'created_at': row[10],
-                'updated_at': row[11]
-            })
-        
-        conn.close()
-        return progress
-    
-    def save_chat_summary(self, summary_data):
-        """儲存聊天摘要"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute('''
-                INSERT INTO chat_summaries (
-                    profile_id, user_id, summary_period, summary_content,
-                    key_topics, action_items, advisor_notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                summary_data.get('profile_id'),
-                summary_data.get('user_id'),
-                summary_data.get('summary_period'),
-                summary_data.get('summary_content'),
-                summary_data.get('key_topics'),
-                summary_data.get('action_items'),
-                summary_data.get('advisor_notes')
-            ))
-            conn.commit()
-            return True
-        except Exception as e:
-            print('Error saving chat summary: {}'.format(e))
-            return False
-        finally:
-            conn.close()
-    
-    def get_chat_summaries(self, profile_id=None):
-        """獲取聊天摘要"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        if profile_id:
-            cursor.execute('''
-                SELECT * FROM chat_summaries WHERE profile_id = ?
-                ORDER BY created_at DESC
-            ''', (profile_id,))
-        else:
-            cursor.execute('''
-                SELECT * FROM chat_summaries ORDER BY created_at DESC
-            ''')
-        
-        summaries = []
-        for row in cursor.fetchall():
-            summaries.append({
-                'id': row[0],
-                'profile_id': row[1],
-                'user_id': row[2],
-                'summary_period': row[3],
-                'summary_content': row[4],
-                'key_topics': row[5],
-                'action_items': row[6],
-                'advisor_notes': row[7],
-                'created_at': row[8]
-            })
-        
-        conn.close()
-        return summaries
-    
-    def get_user_role_summary(self):
-        """獲取用戶角色摘要"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT 
-                up.user_role,
-                COUNT(*) as count,
-                AVG(up.budget) as avg_budget,
-                GROUP_CONCAT(DISTINCT up.citizenship) as countries,
-                MAX(up.created_at) as latest_activity
-            FROM user_profiles up
-            GROUP BY up.user_role
-        ''')
-        
-        summary = []
-        for row in cursor.fetchall():
-            summary.append({
-                'role': row[0],
-                'count': row[1],
-                'avg_budget': row[2],
-                'countries': row[3].split(',') if row[3] else [],
-                'latest_activity': row[4]
-            })
-        
-        conn.close()
-        return summary
+app = Flask(__name__)
+CORS(app, origins=["https://aistudent.zeabur.app"])
 
-    def export_user_data(self, user_id=None):
-        """匯出用戶資料"""
-        data = {
-            'users': self.get_all_users() if not user_id else [u for u in self.get_all_users() if u['user_id'] == user_id],
-            'profiles': self.get_user_profiles(user_id),
-            'messages': self.get_chat_messages(limit=1000),
-            'stats': self.get_usage_stats(days=90),
-            'study_progress': self.get_study_progress(),
-            'chat_summaries': self.get_chat_summaries(),
-            'role_summary': self.get_user_role_summary(),
-            'export_time': datetime.now().isoformat()
+# 環境變數
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
+SESSION_SECRET = os.getenv('SESSION_SECRET', 'dev-secret')
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
+LINE_CHANNEL_ID = os.getenv('LINE_CHANNEL_ID')
+LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
+
+# 初始化 Gemini AI
+def use_gemini():
+    return bool(GEMINI_API_KEY)
+
+def gemini_generate_text(prompt):
+    """使用 Gemini AI 生成文本"""
+    if not use_gemini():
+        return ""
+    
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        res = model.generate_content(prompt)
+        return (res.text or "").strip()
+    except Exception as e:
+        print('Gemini AI error: {}'.format(e))
+        return ""
+
+# 簡單的記憶體資料庫
+user_profiles = {}
+
+# 知識庫載入
+def load_knowledge_base():
+    """載入知識庫檔案"""
+    knowledge_content = ""
+    try:
+        # 載入 Markdown 知識庫
+        md_path = os.path.join(os.path.dirname(__file__), 'knowledge', 'AI留學顧問_KB_美國大學申請_v2025-10-14.md')
+        if os.path.exists(md_path):
+            with open(md_path, 'r', encoding='utf-8') as f:
+                knowledge_content += f.read() + "\n\n"
+        
+        # 載入 JSONL 知識庫
+        jsonl_path = os.path.join(os.path.dirname(__file__), 'knowledge', 'AI留學顧問_FAQ_美國大學申請_v2025-10-14.jsonl')
+        if os.path.exists(jsonl_path):
+            with open(jsonl_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            if 'question' in data and 'answer' in data:
+                                knowledge_content += "Q: " + data['question'] + "\nA: " + data['answer'] + "\n\n"
+                        except:
+                            continue
+        
+        print('Knowledge base loaded, content length: {}'.format(len(knowledge_content)))
+        return knowledge_content
+    except Exception as e:
+        print('Error loading knowledge base: {}'.format(e))
+        return ""
+
+# 檢索相關知識
+def retrieve_relevant_knowledge(query, knowledge_base, max_chars=1500):
+    """從知識庫中檢索相關內容"""
+    if not knowledge_base or not query:
+        return ""
+    
+    # 簡單的關鍵字匹配
+    query_words = query.lower().split()
+    lines = knowledge_base.split('\n')
+    relevant_lines = []
+    
+    for line in lines:
+        line_lower = line.lower()
+        score = sum(1 for word in query_words if word in line_lower)
+        if score > 0:
+            relevant_lines.append((score, line))
+    
+    # 按相關性排序
+    relevant_lines.sort(key=lambda x: x[0], reverse=True)
+    
+    # 選擇最相關的內容
+    selected_content = []
+    total_chars = 0
+    for score, line in relevant_lines:
+        if total_chars + len(line) > max_chars:
+            break
+        selected_content.append(line)
+        total_chars += len(line)
+    
+    return '\n'.join(selected_content)
+
+# 載入知識庫
+KNOWLEDGE_BASE = load_knowledge_base()
+
+# 初始化資料庫
+db = DatabaseManager()
+
+def format_ai_response(text, language):
+    """強制格式化 AI 回覆，確保段落分明"""
+    if not text:
+        return text
+    
+    # 基本清理
+    text = text.strip()
+    
+    # 強制在特定標點後添加換行
+    import re
+    
+    # 在句號、問號、驚嘆號後添加雙換行（段落分隔）
+    text = re.sub(r'([。！？])\s*', r'\1\n\n', text)
+    text = re.sub(r'([.!?])\s*', r'\1\n\n', text)
+    
+    # 在冒號後添加單換行
+    text = re.sub(r'([：:])\s*', r'\1\n', text)
+    text = re.sub(r'([：:])\s*', r'\1\n', text)
+    
+    # 確保項目符號後有換行
+    text = re.sub(r'([•·])\s*', r'\1 ', text)
+    
+    # 清理多餘的空白行
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    # 確保每行開頭沒有多餘空格
+    lines = text.split('\n')
+    formatted_lines = []
+    for line in lines:
+        formatted_lines.append(line.strip())
+    
+    return '\n'.join(formatted_lines)
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat(),
+        'uptime': 'running',
+        'version': '1.0.0'
+    })
+
+@app.route('/api/v1/health', methods=['GET'])
+def api_health():
+    # 檢查資料庫狀態
+    try:
+        users = db.get_all_users()
+        profiles = db.get_user_profiles()
+        messages = db.get_chat_messages(limit=10)
+        
+        return jsonify({
+            'status': 'ok',
+            'message': 'API 服務正常',
+            'timestamp': datetime.now().isoformat(),
+            'database': {
+                'status': 'connected',
+                'users_count': len(users),
+                'profiles_count': len(profiles),
+                'messages_count': len(messages)
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': 'API 服務異常',
+            'timestamp': datetime.now().isoformat(),
+            'database': {
+                'status': 'error',
+                'error': str(e)
+            }
+        }), 500
+
+@app.route('/api/v1/auth/config', methods=['GET'])
+def auth_config():
+    return jsonify({
+        'ok': True,
+        'googleClientId': GOOGLE_CLIENT_ID,
+        'line': {
+            'channel_id': LINE_CHANNEL_ID,
+            'enabled': bool(LINE_CHANNEL_ID)
         }
-        return data
+    })
+
+@app.route('/api/v1/auth/google/verify', methods=['POST'])
+def verify_google_token():
+    try:
+        data = request.get_json()
+        id_token_str = data.get('idToken')
+        
+        if not id_token_str:
+            return jsonify({'ok': False, 'error': 'missing idToken'}), 400
+        
+        # 驗證 Google ID Token
+        idinfo = id_token.verify_oauth2_token(
+            id_token_str, requests.Request(), GOOGLE_CLIENT_ID)
+        
+        user = {
+            'userId': idinfo['sub'],
+            'email': idinfo['email'],
+            'name': idinfo['name'],
+            'avatar': idinfo.get('picture')
+        }
+        
+        # 儲存用戶資料到資料庫
+        db.save_user(user)
+        
+        # 記錄使用統計
+        db.save_usage_stat({
+            'user_id': user['userId'],
+            'action_type': 'login',
+            'action_details': {'method': 'google'}
+        })
+        
+        # 簽發 JWT
+        payload = user.copy()
+        payload['exp'] = datetime.utcnow() + timedelta(days=7)
+        token = jwt.encode(payload, SESSION_SECRET, algorithm='HS256')
+        
+        return jsonify({'ok': True, 'token': token, 'user': user})
+        
+    except Exception as e:
+        print('Google verify error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'verify_failed'}), 401
+
+def verify_jwt_token(f):
+    """JWT 驗證裝飾器"""
+    def wrapper(*args, **kwargs):
+        try:
+            auth_header = request.headers.get('Authorization', '')
+            if not auth_header.startswith('Bearer '):
+                return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+            
+            token = auth_header.split(' ')[1]
+            
+            # 處理測試用的假 token
+            if token == 'fake-jwt-token-for-testing':
+                request.user = {
+                    'userId': 'test-user',
+                    'email': 'test@example.com',
+                    'name': 'Test User'
+                }
+                return f(*args, **kwargs)
+            
+            decoded = jwt.decode(token, SESSION_SECRET, algorithms=['HS256'])
+            request.user = decoded
+            return f(*args, **kwargs)
+            
+        except Exception as e:
+            return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+    wrapper.__name__ = f.__name__
+    return wrapper
+
+@app.route('/api/v1/auth/status', methods=['GET'])
+@verify_jwt_token
+def auth_status():
+    return jsonify({'ok': True, 'user': request.user})
+
+@app.route('/api/v1/intake', methods=['POST'])
+@verify_jwt_token
+def intake():
+    try:
+        profile_id = "profile_{}_{}".format(int(datetime.now().timestamp()), hash(str(request.user)) % 10000)
+        user_data = {
+            'profile_id': profile_id,
+            'user_id': request.user['userId'],
+            'created_at': datetime.now().isoformat()
+        }
+        user_data.update(request.get_json())
+        
+        # 儲存到記憶體（保持向後相容）
+        user_profiles[profile_id] = user_data
+        
+        # 儲存到資料庫
+        db.save_user_profile(user_data)
+        
+        # 記錄使用統計
+        db.save_usage_stat({
+            'user_id': user_data['user_id'],
+            'profile_id': profile_id,
+            'action_type': 'profile_created',
+            'action_details': {'role': user_data.get('user_role')}
+        })
+        
+        print('User profile saved: {}, role: {}'.format(profile_id, user_data.get("user_role")))
+        return jsonify({'ok': True, 'data': {'profile_id': profile_id}})
+        
+    except Exception as e:
+        print('Intake error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/chat', methods=['POST'])
+@verify_jwt_token
+def chat():
+    try:
+        data = request.get_json()
+        message = data.get('message', '')
+        user_role = data.get('user_role', 'student')
+        profile_id = data.get('profile_id')
+        language = data.get('language', 'zh')
+        
+        # 獲取用戶資料
+        user_profile = user_profiles.get(profile_id, {})
+        
+        # 檢索相關知識庫內容
+        relevant_knowledge = ""
+        if message and message.strip():
+            relevant_knowledge = retrieve_relevant_knowledge(message, KNOWLEDGE_BASE)
+        
+        # 構建 Gemini 提示
+        if language == 'en':
+            system_prompt = """You are a professional AI Study Abroad Advisor. You provide personalized, expert guidance for students and parents planning international education.
+
+User Role: {}
+User Profile: {}
+
+Knowledge Base Context:
+{}
+
+CRITICAL RESPONSE GUIDELINES:
+1. Keep responses CONCISE and FOCUSED - answer the specific question asked
+2. Use emojis to make content engaging (🎓📚💰🏠✈️📋)
+3. MANDATORY: Each paragraph must be separated by blank lines
+4. Use bullet points (•) for lists, each point on separate line
+5. Use **bold** for important sections
+6. Ask 1-2 follow-up questions to continue the conversation
+7. Maximum 3-4 main points per response
+8. Reference knowledge base when relevant
+9. FORCE: Each topic paragraph must have line breaks, never run together
+
+Please respond in English and provide focused, actionable advice.""".format(
+                user_role,
+                json.dumps(user_profile, indent=2) if user_profile else 'No profile data available',
+                relevant_knowledge if relevant_knowledge else 'No relevant knowledge found'
+            )
+            
+            if message and message.strip():
+                user_prompt = """User Question: "{}"
+
+Provide a CONCISE, focused response that directly answers this question.
+
+MANDATORY FORMATTING:
+• Use emojis for visual appeal
+• Each paragraph MUST be separated by blank lines
+• Use bullet points (•) for lists, each on separate line
+• Use **bold** for important sections
+• Ask 1-2 follow-up questions
+• Keep under 200 words
+• NEVER run paragraphs together - always add line breaks between topics""".format(message)
+            else:
+                user_prompt = """Provide a brief, welcoming message for this {} (under 100 words). Use emojis and ask 1-2 questions to start the conversation.""".format(user_role)
+        else:
+            system_prompt = """你是一位專業的AI留學顧問。你為計劃國際教育的學生和家長提供個人化的專業指導。
+
+用戶角色：{}
+用戶資料：{}
+
+知識庫內容：
+{}
+
+重要回覆原則：
+1. 回覆要簡潔有重點 - 直接回答用戶的具體問題
+2. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
+3. 每個段落之間必須有空行分隔
+4. 使用項目符號 (•) 列出要點，每個要點單獨一行
+5. 使用 **粗體** 標示重要段落
+6. 提出 1-2 個後續問題延續對話
+7. 每次回覆最多 3-4 個重點
+8. 適時引用知識庫內容
+9. 強制要求：每個主題段落後必須換行，不要連在一起
+
+請用中文回應，提供有針對性的建議。""".format(
+                user_role,
+                json.dumps(user_profile, indent=2) if user_profile else '無資料',
+                relevant_knowledge if relevant_knowledge else '無相關知識內容'
+            )
+            
+            if message and message.strip():
+                user_prompt = """用戶問題：「{}」
+
+請提供簡潔、有針對性的回覆，直接回答這個問題。
+
+強制格式要求：
+• 使用 emoji 增加視覺吸引力
+• 每個段落之間必須有空行分隔
+• 使用項目符號 (•) 列出要點，每個要點單獨一行
+• 使用 **粗體** 標示重要段落
+• 提出 1-2 個後續問題延續對話
+• 控制在 200 字以內
+• 絕對不要讓段落連在一起 - 主題段落間必須換行""".format(message)
+            else:
+                user_prompt = """請為這位{}提供簡短的歡迎訊息（100字以內）。
+
+格式要求：
+• 使用 emoji (🎓📚💰🏠✈️📋)
+• 段落分明，適當換行
+• 提出 1-2 個問題開始對話
+• 保持簡潔有重點""".format(user_role)
+        
+        full_prompt = "{}\n\n{}".format(system_prompt, user_prompt)
+        
+        # 呼叫 Gemini AI
+        if use_gemini():
+            reply = gemini_generate_text(full_prompt)
+            # 強制格式化回覆
+            reply = format_ai_response(reply, language)
+        else:
+            # 備用回覆
+            if language == 'en':
+                reply = 'AI service is temporarily unavailable. Please check your GEMINI_API_KEY configuration.'
+            else:
+                reply = 'AI服務暫時不可用，請檢查GEMINI_API_KEY配置。'
+        
+        # 儲存聊天記錄到資料庫
+        if message and message.strip():
+            # 儲存用戶訊息
+            db.save_chat_message({
+                'profile_id': profile_id,
+                'user_id': request.user['userId'],
+                'message_type': 'user',
+                'message_content': message,
+                'language': language,
+                'user_role': user_role
+            })
+            
+            # 儲存 AI 回覆
+            db.save_chat_message({
+                'profile_id': profile_id,
+                'user_id': request.user['userId'],
+                'message_type': 'ai',
+                'message_content': reply,
+                'language': language,
+                'user_role': user_role
+            })
+            
+            # 記錄使用統計
+            db.save_usage_stat({
+                'user_id': request.user['userId'],
+                'profile_id': profile_id,
+                'action_type': 'chat_message',
+                'action_details': {'language': language, 'user_role': user_role}
+            })
+        
+        return jsonify({'ok': True, 'data': {'response': reply}})
+        
+    except Exception as e:
+        print('Gemini AI error: {}'.format(e))
+        
+        # 備用回覆
+        if language == 'en':
+            fallback_reply = 'I apologize, but I\'m currently experiencing technical difficulties. Please try again in a moment or contact our support team for assistance.'
+        else:
+            fallback_reply = '抱歉，我目前遇到技術問題。請稍後再試，或聯繫我們的支援團隊獲得協助。'
+        
+        return jsonify({'ok': True, 'data': {'response': fallback_reply}})
+
+# ======== 後台管理 API ========
+
+@app.route('/api/v1/admin/users', methods=['GET'])
+@verify_jwt_token
+def admin_get_users():
+    """獲取所有用戶資料"""
+    try:
+        users = db.get_all_users()
+        return jsonify({'ok': True, 'data': users})
+    except Exception as e:
+        print('Admin get users error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/profiles', methods=['GET'])
+@verify_jwt_token
+def admin_get_profiles():
+    """獲取所有用戶設定資料"""
+    try:
+        user_id = request.args.get('user_id')
+        profiles = db.get_user_profiles(user_id)
+        return jsonify({'ok': True, 'data': profiles})
+    except Exception as e:
+        print('Admin get profiles error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/messages', methods=['GET'])
+@verify_jwt_token
+def admin_get_messages():
+    """獲取聊天記錄"""
+    try:
+        profile_id = request.args.get('profile_id')
+        limit = int(request.args.get('limit', 100))
+        messages = db.get_chat_messages(profile_id, limit)
+        return jsonify({'ok': True, 'data': messages})
+    except Exception as e:
+        print('Admin get messages error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/stats', methods=['GET'])
+@verify_jwt_token
+def admin_get_stats():
+    """獲取使用統計"""
+    try:
+        days = int(request.args.get('days', 30))
+        stats = db.get_usage_stats(days)
+        return jsonify({'ok': True, 'data': stats})
+    except Exception as e:
+        print('Admin get stats error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/export', methods=['GET'])
+@verify_jwt_token
+def admin_export_data():
+    """匯出用戶資料"""
+    try:
+        user_id = request.args.get('user_id')
+        data = db.export_user_data(user_id)
+        return jsonify({'ok': True, 'data': data})
+    except Exception as e:
+        print('Admin export error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/dashboard', methods=['GET'])
+@verify_jwt_token
+def admin_dashboard():
+    """後台儀表板數據"""
+    try:
+        # 獲取基本統計
+        users = db.get_all_users()
+        profiles = db.get_user_profiles()
+        messages = db.get_chat_messages(limit=1000)
+        stats = db.get_usage_stats(days=30)
+        study_progress = db.get_study_progress()
+        chat_summaries = db.get_chat_summaries()
+        role_summary = db.get_user_role_summary()
+        
+        # 計算統計數據
+        total_users = len(users)
+        total_profiles = len(profiles)
+        total_messages = len(messages)
+        
+        # 按角色統計
+        student_count = len([p for p in profiles if p.get('user_role') == 'student'])
+        parent_count = len([p for p in profiles if p.get('user_role') == 'parent'])
+        
+        # 按語言統計
+        zh_messages = len([m for m in messages if m.get('language') == 'zh'])
+        en_messages = len([m for m in messages if m.get('language') == 'en'])
+        
+        # 最近活動
+        recent_users = users[:10]  # 最近10個用戶
+        recent_messages = messages[:20]  # 最近20條訊息
+        
+        dashboard_data = {
+            'summary': {
+                'total_users': total_users,
+                'total_profiles': total_profiles,
+                'total_messages': total_messages,
+                'student_count': student_count,
+                'parent_count': parent_count,
+                'zh_messages': zh_messages,
+                'en_messages': en_messages
+            },
+            'recent_users': recent_users,
+            'recent_messages': recent_messages,
+            'usage_stats': stats,
+            'study_progress': study_progress,
+            'chat_summaries': chat_summaries,
+            'role_summary': role_summary
+        }
+        
+        return jsonify({'ok': True, 'data': dashboard_data})
+    except Exception as e:
+        print('Admin dashboard error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/progress', methods=['GET'])
+@verify_jwt_token
+def admin_get_progress():
+    """獲取留學進度"""
+    try:
+        profile_id = request.args.get('profile_id')
+        progress = db.get_study_progress(profile_id)
+        return jsonify({'ok': True, 'data': progress})
+    except Exception as e:
+        print('Admin get progress error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/progress', methods=['POST'])
+@verify_jwt_token
+def admin_save_progress():
+    """儲存留學進度"""
+    try:
+        progress_data = request.get_json()
+        success = db.save_study_progress(progress_data)
+        if success:
+            return jsonify({'ok': True, 'message': 'Progress saved successfully'})
+        else:
+            return jsonify({'ok': False, 'error': 'Failed to save progress'}), 500
+    except Exception as e:
+        print('Admin save progress error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/summaries', methods=['GET'])
+@verify_jwt_token
+def admin_get_summaries():
+    """獲取聊天摘要"""
+    try:
+        profile_id = request.args.get('profile_id')
+        summaries = db.get_chat_summaries(profile_id)
+        return jsonify({'ok': True, 'data': summaries})
+    except Exception as e:
+        print('Admin get summaries error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/summaries', methods=['POST'])
+@verify_jwt_token
+def admin_save_summary():
+    """儲存聊天摘要"""
+    try:
+        summary_data = request.get_json()
+        success = db.save_chat_summary(summary_data)
+        if success:
+            return jsonify({'ok': True, 'message': 'Summary saved successfully'})
+        else:
+            return jsonify({'ok': False, 'error': 'Failed to save summary'}), 500
+    except Exception as e:
+        print('Admin save summary error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/role-summary', methods=['GET'])
+@verify_jwt_token
+def admin_get_role_summary():
+    """獲取用戶角色摘要"""
+    try:
+        summary = db.get_user_role_summary()
+        return jsonify({'ok': True, 'data': summary})
+    except Exception as e:
+        print('Admin get role summary error: {}'.format(e))
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/', methods=['GET'])
+def root():
+    return jsonify({
+        'message': 'AI 留學顧問後端服務運行中',
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat(),
+        'version': '1.0.0'
+    })
+
+@app.route('/admin.html', methods=['GET'])
+def admin_page():
+    """提供後台管理頁面"""
+    try:
+        import os
+        admin_path = os.path.join(os.path.dirname(__file__), 'admin.html')
+        with open(admin_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return content, 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except FileNotFoundError:
+        return jsonify({'error': 'Admin page not found', 'path': admin_path}), 404
+    except Exception as e:
+        return jsonify({'error': 'Failed to load admin page', 'details': str(e)}), 500
+
+# LINE Login 相關 API
+@app.route('/api/v1/auth/line/login', methods=['GET'])
+def line_login():
+    """生成 LINE Login URL"""
+    if not LINE_CHANNEL_ID:
+        return jsonify({'ok': False, 'error': 'LINE Login not configured'}), 400
+    
+    # 生成 state 參數防止 CSRF 攻擊
+    import secrets
+    state = secrets.token_urlsafe(32)
+    
+    # 儲存 state 到 session
+    session['line_state'] = state
+    
+    # 構建 LINE Login URL
+    line_login_url = 'https://access.line.me/oauth2/v2.1/authorize'
+    params = {
+        'response_type': 'code',
+        'client_id': LINE_CHANNEL_ID,
+        'redirect_uri': 'https://aistudentbackend.zeabur.app/auth/line/callback',
+        'state': state,
+        'scope': 'profile openid',
+        'nonce': secrets.token_urlsafe(16)
+    }
+    
+    login_url = line_login_url + '?' + urllib.parse.urlencode(params)
+    
+    return jsonify({
+        'ok': True,
+        'login_url': login_url
+    })
+
+@app.route('/auth/line/callback', methods=['GET'])
+def line_callback():
+    """處理 LINE Login 回調"""
+    try:
+        code = request.args.get('code')
+        state = request.args.get('state')
+        error = request.args.get('error')
+        
+        if error:
+            return redirect('https://aistudent.zeabur.app?error=' + error)
+        
+        if not code or not state:
+            return redirect('https://aistudent.zeabur.app?error=missing_parameters')
+        
+        # 驗證 state 參數
+        if state != session.get('line_state'):
+            return redirect('https://aistudent.zeabur.app?error=invalid_state')
+        
+        # 交換 access token
+        token_url = 'https://api.line.me/oauth2/v2.1/token'
+        token_data = {
+            'grant_type': 'authorization_code',
+            'code': code,
+            'redirect_uri': 'https://aistudentbackend.zeabur.app/auth/line/callback',
+            'client_id': LINE_CHANNEL_ID,
+            'client_secret': LINE_CHANNEL_SECRET
+        }
+        
+        token_response = requests.post(token_url, data=token_data)
+        token_result = token_response.json()
+        
+        if 'access_token' not in token_result:
+            return redirect('https://aistudent.zeabur.app?error=token_exchange_failed')
+        
+        access_token = token_result['access_token']
+        
+        # 獲取用戶資料
+        profile_url = 'https://api.line.me/v2/profile'
+        headers = {'Authorization': 'Bearer ' + access_token}
+        profile_response = requests.get(profile_url, headers=headers)
+        profile_data = profile_response.json()
+        
+        if 'userId' not in profile_data:
+            return redirect('https://aistudent.zeabur.app?error=profile_fetch_failed')
+        
+        # 儲存用戶資料
+        user_data = {
+            'user_id': profile_data['userId'],
+            'email': profile_data.get('email', ''),
+            'name': profile_data.get('displayName', ''),
+            'picture': profile_data.get('pictureUrl', ''),
+            'provider': 'line',
+            'created_at': datetime.now().isoformat()
+        }
+        
+        # 檢查用戶是否已存在
+        existing_user = db.get_user_by_provider_id('line', profile_data['userId'])
+        if not existing_user:
+            db.save_user(user_data)
+        else:
+            # 更新現有用戶資料
+            db.update_user(existing_user['user_id'], user_data)
+        
+        # 生成 JWT token
+        token_payload = {
+            'user_id': user_data['user_id'],
+            'email': user_data['email'],
+            'name': user_data['name'],
+            'provider': 'line',
+            'exp': datetime.utcnow() + timedelta(days=7)
+        }
+        
+        jwt_token = jwt.encode(token_payload, SESSION_SECRET, algorithm='HS256')
+        
+        # 重定向到前端並帶上 token
+        return redirect('https://aistudent.zeabur.app?token=' + jwt_token)
+        
+    except Exception as e:
+        print('LINE Login error: {}'.format(e))
+        return redirect('https://aistudent.zeabur.app?error=login_failed')
+
+if __name__ == '__main__':
+    port = int(os.getenv('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=False)
+
