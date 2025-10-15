@@ -556,6 +556,20 @@ def root():
         'version': '1.0.0'
     })
 
+@app.route('/admin.html', methods=['GET'])
+def admin_page():
+    """提供後台管理頁面"""
+    try:
+        import os
+        admin_path = os.path.join(os.path.dirname(__file__), 'admin.html')
+        with open(admin_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return content, 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except FileNotFoundError:
+        return jsonify({'error': 'Admin page not found', 'path': admin_path}), 404
+    except Exception as e:
+        return jsonify({'error': 'Failed to load admin page', 'details': str(e)}), 500
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
