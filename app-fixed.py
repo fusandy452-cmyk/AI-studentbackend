@@ -119,7 +119,7 @@ def require_admin_auth(f):
     return decorated_function
 
 # 基本健康檢查
-@app.route('/api/v1/health', methods=['GET'])
+@app.route('/health', methods=['GET'])
 def health_check():
     try:
         # 檢查資料庫連接
@@ -150,6 +150,11 @@ def health_check():
             'error': str(e),
             'timestamp': datetime.now().isoformat()
         }), 500
+
+# API 版本健康檢查（向後相容）
+@app.route('/api/v1/health', methods=['GET'])
+def api_health_check():
+    return health_check()
 
 # Google OAuth 驗證
 @app.route('/api/v1/auth/google/verify', methods=['POST'])
@@ -268,8 +273,49 @@ def google_callback():
         
         jwt_token = jwt.encode(token_payload, SESSION_SECRET, algorithm='HS256')
         
-        # 重定向到前端並帶上 token
-        return redirect('https://aistudent.zeabur.app?token=' + jwt_token)
+        # 檢查是否來自彈出視窗
+        state = request.args.get('state', '')
+        
+        if state == 'popup_login':
+            # 彈出視窗登入：使用 JavaScript 關閉彈出視窗並傳遞 token
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>登入成功</title>
+                <meta charset="UTF-8">
+            </head>
+            <body>
+                <script>
+                    // 將 token 傳遞給父視窗
+                    if (window.opener) {{
+                        window.opener.postMessage({{
+                            type: 'GOOGLE_LOGIN_SUCCESS',
+                            token: '{jwt_token}',
+                            user: {{
+                                userId: '{user_info['user_id']}',
+                                email: '{user_info['email']}',
+                                name: '{user_info['name']}',
+                                avatar: '{user_info['picture']}'
+                            }}
+                        }}, 'https://aistudent.zeabur.app');
+                        window.close();
+                    }} else {{
+                        // 如果沒有父視窗，直接跳轉
+                        window.location.href = 'https://aistudent.zeabur.app?token={jwt_token}';
+                    }}
+                </script>
+                <div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
+                    <h2>登入成功！</h2>
+                    <p>正在關閉視窗...</p>
+                </div>
+            </body>
+            </html>
+            """
+            return html_content
+        else:
+            # 一般登入：重定向到前端並帶上 token
+            return redirect('https://aistudent.zeabur.app?token=' + jwt_token)
         
     except Exception as e:
         logger.error('Google callback error: {}'.format(e))
@@ -605,7 +651,14 @@ def root():
         'message': 'AI 留學顧問後端服務運行中',
         'status': 'ok',
         'timestamp': datetime.now().isoformat(),
-        'version': '1.0.0'
+        'version': '1.0.0',
+        'environment': {
+            'GEMINI_API_KEY': bool(GEMINI_API_KEY),
+            'SESSION_SECRET': bool(SESSION_SECRET),
+            'GOOGLE_CLIENT_ID': bool(GOOGLE_CLIENT_ID),
+            'GOOGLE_CLIENT_SECRET': bool(GOOGLE_CLIENT_SECRET),
+            'LINE_CHANNEL_ID': bool(LINE_CHANNEL_ID)
+        }
     })
 
 if __name__ == '__main__':
