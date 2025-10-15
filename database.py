@@ -572,6 +572,33 @@ class DatabaseManager:
         
         conn.close()
         return summary
+    
+    def get_users_count(self):
+        """獲取用戶總數"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM users')
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    
+    def get_profiles_count(self):
+        """獲取用戶設定總數"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM user_profiles')
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    
+    def get_messages_count(self):
+        """獲取聊天訊息總數"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM chat_messages')
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
 
     def export_user_data(self, user_id=None):
         """匯出用戶資料"""
