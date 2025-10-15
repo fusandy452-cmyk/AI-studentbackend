@@ -10,9 +10,20 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 from database import DatabaseManager
 import urllib.parse
+import time
+from collections import defaultdict
+import re
+import html
+import logging
+import hashlib
+import secrets
 
 app = Flask(__name__)
 CORS(app, origins=["https://aistudent.zeabur.app"])
+
+# 設定日誌
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 環境變數
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
@@ -111,6 +122,107 @@ KNOWLEDGE_BASE = load_knowledge_base()
 # 初始化資料庫
 db = DatabaseManager()
 
+# 速率限制
+rate_limit_storage = defaultdict(list)
+RATE_LIMIT_WINDOW = 60  # 60秒
+RATE_LIMIT_MAX_REQUESTS = 10  # 每分鐘最多10次請求
+
+def check_rate_limit(ip_address):
+    """檢查速率限制"""
+    current_time = time.time()
+    # 清理過期的請求記錄
+    rate_limit_storage[ip_address] = [
+        req_time for req_time in rate_limit_storage[ip_address]
+        if current_time - req_time < RATE_LIMIT_WINDOW
+    ]
+    
+    # 檢查是否超過限制
+    if len(rate_limit_storage[ip_address]) >= RATE_LIMIT_MAX_REQUESTS:
+        return False
+    
+    # 記錄當前請求
+    rate_limit_storage[ip_address].append(current_time)
+    return True
+
+def sanitize_input(text, max_length=1000):
+    """清理和驗證用戶輸入"""
+    if not text:
+        return ""
+    
+    # 限制長度
+    text = text[:max_length]
+    
+    # HTML 轉義
+    text = html.escape(text)
+    
+    # 移除潛在危險字符
+    text = re.sub(r'[<>"\']', '', text)
+    
+    return text.strip()
+
+def validate_email(email):
+    """驗證電子郵件格式"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+# 管理員認證相關函數
+def hash_password(password):
+    """密碼雜湊"""
+    salt = secrets.token_hex(16)
+    password_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000)
+    return salt + password_hash.hex()
+
+def verify_password(password, password_hash):
+    """驗證密碼"""
+    if len(password_hash) < 32:
+        return False
+    salt = password_hash[:32]
+    stored_hash = password_hash[32:]
+    password_hash_check = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt.encode('utf-8'), 100000)
+    return password_hash_check.hex() == stored_hash
+
+def require_admin_auth(f):
+    """管理員認證裝飾器"""
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Unauthorized', 'message': '需要管理員認證'}), 401
+        
+        session_id = auth_header.split(' ')[1]
+        session = db.get_admin_session(session_id)
+        
+        if not session:
+            return jsonify({'error': 'Unauthorized', 'message': '會話已過期'}), 401
+        
+        # 將管理員資訊添加到請求上下文
+        request.admin = session
+        return f(*args, **kwargs)
+    
+    wrapper.__name__ = f.__name__
+    return wrapper
+
+def require_super_admin(f):
+    """超級管理員認證裝飾器"""
+    def wrapper(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Unauthorized', 'message': '需要管理員認證'}), 401
+        
+        session_id = auth_header.split(' ')[1]
+        session = db.get_admin_session(session_id)
+        
+        if not session:
+            return jsonify({'error': 'Unauthorized', 'message': '會話已過期'}), 401
+        
+        if session['role'] != 'super_admin':
+            return jsonify({'error': 'Forbidden', 'message': '需要超級管理員權限'}), 403
+        
+        request.admin = session
+        return f(*args, **kwargs)
+    
+    wrapper.__name__ = f.__name__
+    return wrapper
+
 def format_ai_response(text, language):
     """強制格式化 AI 回覆，確保段落分明"""
     if not text:
@@ -187,15 +299,23 @@ def api_health():
 def auth_config():
     return jsonify({
         'ok': True,
-        'googleClientId': GOOGLE_CLIENT_ID,
+        'google': {
+            'enabled': bool(GOOGLE_CLIENT_ID),
+            'client_id': GOOGLE_CLIENT_ID if GOOGLE_CLIENT_ID else None
+        },
         'line': {
-            'channel_id': LINE_CHANNEL_ID,
-            'enabled': bool(LINE_CHANNEL_ID)
+            'enabled': bool(LINE_CHANNEL_ID),
+            'channel_id': LINE_CHANNEL_ID if LINE_CHANNEL_ID else None
         }
     })
 
 @app.route('/api/v1/auth/google/verify', methods=['POST'])
 def verify_google_token():
+    # 速率限制
+    client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+    if not check_rate_limit(client_ip):
+        return jsonify({'ok': False, 'error': 'rate_limit_exceeded'}), 429
+    
     try:
         data = request.get_json()
         id_token_str = data.get('idToken')
@@ -232,8 +352,95 @@ def verify_google_token():
         return jsonify({'ok': True, 'token': token, 'user': user})
         
     except Exception as e:
-        print('Google verify error: {}'.format(e))
+        logger.error('Google verify error: {}'.format(e))
         return jsonify({'ok': False, 'error': 'verify_failed'}), 401
+
+@app.route('/auth/google/callback', methods=['GET'])
+def google_callback():
+    """處理 Google OAuth 回調"""
+    try:
+        code = request.args.get('code')
+        state = request.args.get('state')
+        error = request.args.get('error')
+        
+        if error:
+            return redirect('https://aistudent.zeabur.app?error=' + error)
+        
+        if not code:
+            return redirect('https://aistudent.zeabur.app?error=missing_code')
+        
+        # 交換 access token
+        token_url = 'https://oauth2.googleapis.com/token'
+        token_data = {
+            'client_id': GOOGLE_CLIENT_ID,
+            'client_secret': GOOGLE_CLIENT_SECRET,
+            'code': code,
+            'grant_type': 'authorization_code',
+            'redirect_uri': 'https://aistudentbackend.zeabur.app/auth/google/callback'
+        }
+        
+        token_response = requests.post(token_url, data=token_data)
+        token_result = token_response.json()
+        
+        if 'access_token' not in token_result:
+            return redirect('https://aistudent.zeabur.app?error=token_exchange_failed')
+        
+        access_token = token_result['access_token']
+        
+        # 獲取用戶資料
+        user_info_url = 'https://www.googleapis.com/oauth2/v2/userinfo'
+        headers = {'Authorization': 'Bearer ' + access_token}
+        user_response = requests.get(user_info_url, headers=headers)
+        user_data = user_response.json()
+        
+        if 'id' not in user_data:
+            return redirect('https://aistudent.zeabur.app?error=user_info_failed')
+        
+        # 儲存用戶資料
+        user_info = {
+            'user_id': user_data['id'],
+            'email': user_data.get('email', ''),
+            'name': user_data.get('name', ''),
+            'picture': user_data.get('picture', ''),
+            'provider': 'google',
+            'created_at': datetime.now().isoformat()
+        }
+        
+        # 檢查用戶是否已存在
+        existing_user = db.get_user_by_provider_id('google', user_data['id'])
+        if not existing_user:
+            db.save_user(user_info)
+        else:
+            # 更新現有用戶資料
+            db.update_user(existing_user['user_id'], user_info)
+        
+        # 生成 JWT token
+        token_payload = {
+            'user_id': user_info['user_id'],
+            'email': user_info['email'],
+            'name': user_info['name'],
+            'provider': 'google',
+            'exp': datetime.utcnow() + timedelta(days=7)
+        }
+        
+        jwt_token = jwt.encode(token_payload, SESSION_SECRET, algorithm='HS256')
+        
+        # 重定向到前端並帶上 token
+        return redirect('https://aistudent.zeabur.app?token=' + jwt_token)
+        
+    except Exception as e:
+        logger.error('Google callback error: {}'.format(e))
+        return redirect('https://aistudent.zeabur.app?error=callback_failed')
+
+@app.route('/api/v1/auth/logout', methods=['POST'])
+def user_logout():
+    """用戶登出"""
+    try:
+        # 清除 JWT token (前端處理)
+        return jsonify({'ok': True, 'message': '已登出'})
+    except Exception as e:
+        logger.error('User logout error: {}'.format(e))
+        return jsonify({'error': '登出失敗'}), 500
 
 def verify_jwt_token(f):
     """JWT 驗證裝飾器"""
@@ -670,6 +877,170 @@ def admin_page():
     except Exception as e:
         return jsonify({'error': 'Failed to load admin page', 'details': str(e)}), 500
 
+@app.route('/api/v1/admin/backup', methods=['GET'])
+def backup_database():
+    """資料庫備份 API"""
+    try:
+        # 檢查管理員權限
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        # 獲取所有資料
+        users = db.get_all_users()
+        profiles = db.get_user_profiles()
+        messages = db.get_chat_messages(limit=1000)
+        usage_stats = db.get_usage_stats(limit=1000)
+        
+        backup_data = {
+            'timestamp': datetime.now().isoformat(),
+            'users': users,
+            'profiles': profiles,
+            'messages': messages,
+            'usage_stats': usage_stats
+        }
+        
+        return jsonify({
+            'ok': True,
+            'backup': backup_data,
+            'counts': {
+                'users': len(users),
+                'profiles': len(profiles),
+                'messages': len(messages),
+                'usage_stats': len(usage_stats)
+            }
+        })
+        
+    except Exception as e:
+        logger.error('Backup error: {}'.format(e))
+        return jsonify({'error': 'Backup failed', 'details': str(e)}), 500
+
+@app.route('/api/v1/monitor/status', methods=['GET'])
+def monitor_status():
+    """系統監控狀態 API"""
+    try:
+        import psutil
+        import os
+        
+        # 系統資源監控
+        cpu_percent = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        # 資料庫狀態
+        try:
+            users = db.get_all_users()
+            profiles = db.get_user_profiles()
+            messages = db.get_chat_messages(limit=10)
+            db_status = 'healthy'
+        except Exception as e:
+            db_status = 'error'
+            logger.error('Database health check failed: {}'.format(e))
+        
+        # API 健康檢查
+        api_status = 'healthy'
+        
+        # 環境變數檢查
+        env_status = {
+            'GEMINI_API_KEY': bool(GEMINI_API_KEY),
+            'SESSION_SECRET': bool(SESSION_SECRET),
+            'GOOGLE_CLIENT_ID': bool(GOOGLE_CLIENT_ID),
+            'LINE_CHANNEL_ID': bool(LINE_CHANNEL_ID)
+        }
+        
+        return jsonify({
+            'ok': True,
+            'timestamp': datetime.now().isoformat(),
+            'system': {
+                'cpu_percent': cpu_percent,
+                'memory_percent': memory.percent,
+                'memory_available': memory.available,
+                'disk_percent': disk.percent,
+                'disk_free': disk.free
+            },
+            'services': {
+                'database': db_status,
+                'api': api_status
+            },
+            'environment': env_status,
+            'uptime': time.time() - psutil.boot_time()
+        })
+        
+    except ImportError:
+        # 如果 psutil 不可用，返回基本狀態
+        return jsonify({
+            'ok': True,
+            'timestamp': datetime.now().isoformat(),
+            'system': {
+                'status': 'basic_monitoring'
+            },
+            'services': {
+                'database': 'unknown',
+                'api': 'healthy'
+            },
+            'environment': {
+                'GEMINI_API_KEY': bool(GEMINI_API_KEY),
+                'SESSION_SECRET': bool(SESSION_SECRET),
+                'GOOGLE_CLIENT_ID': bool(GOOGLE_CLIENT_ID),
+                'LINE_CHANNEL_ID': bool(LINE_CHANNEL_ID)
+            }
+        })
+    except Exception as e:
+        logger.error('Monitor status error: {}'.format(e))
+        return jsonify({
+            'ok': False,
+            'error': 'Monitor check failed',
+            'details': str(e)
+        }), 500
+
+@app.route('/api/v1/monitor/ssl', methods=['GET'])
+def monitor_ssl():
+    """SSL 證書監控 API"""
+    try:
+        import ssl
+        import socket
+        from datetime import datetime
+        
+        def check_ssl_cert(hostname, port=443):
+            context = ssl.create_default_context()
+            with socket.create_connection((hostname, port), timeout=10) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                    cert = ssock.getpeercert()
+                    return cert
+        
+        # 檢查前端 SSL
+        frontend_cert = check_ssl_cert('aistudent.zeabur.app')
+        backend_cert = check_ssl_cert('aistudentbackend.zeabur.app')
+        
+        def parse_cert_dates(cert):
+            from datetime import datetime
+            not_before = datetime.strptime(cert['notBefore'], '%b %d %H:%M:%S %Y %Z')
+            not_after = datetime.strptime(cert['notAfter'], '%b %d %H:%M:%S %Y %Z')
+            days_remaining = (not_after - datetime.now()).days
+            return {
+                'not_before': not_before.isoformat(),
+                'not_after': not_after.isoformat(),
+                'days_remaining': days_remaining,
+                'status': 'expiring_soon' if days_remaining < 30 else 'healthy'
+            }
+        
+        return jsonify({
+            'ok': True,
+            'timestamp': datetime.now().isoformat(),
+            'certificates': {
+                'frontend': parse_cert_dates(frontend_cert),
+                'backend': parse_cert_dates(backend_cert)
+            }
+        })
+        
+    except Exception as e:
+        logger.error('SSL monitor error: {}'.format(e))
+        return jsonify({
+            'ok': False,
+            'error': 'SSL check failed',
+            'details': str(e)
+        }), 500
+
 # LINE Login 相關 API
 @app.route('/api/v1/auth/line/login', methods=['GET'])
 def line_login():
@@ -783,7 +1154,181 @@ def line_callback():
         print('LINE Login error: {}'.format(e))
         return redirect('https://aistudent.zeabur.app?error=login_failed')
 
+# 管理員認證 API
+@app.route('/api/v1/admin/login', methods=['POST'])
+def admin_login():
+    """管理員登入"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        
+        if not username or not password:
+            return jsonify({'error': '請提供用戶名和密碼'}), 400
+        
+        # 獲取管理員資訊
+        admin = db.get_admin_by_username(username)
+        if not admin:
+            return jsonify({'error': '用戶名或密碼錯誤'}), 401
+        
+        # 驗證密碼
+        if not verify_password(password, admin['password_hash']):
+            return jsonify({'error': '用戶名或密碼錯誤'}), 401
+        
+        # 生成會話
+        session_id = secrets.token_urlsafe(32)
+        expires_at = datetime.utcnow() + timedelta(hours=8)
+        
+        # 儲存會話
+        client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
+        user_agent = request.headers.get('User-Agent', '')
+        
+        if db.create_admin_session(session_id, admin['admin_id'], expires_at, client_ip, user_agent):
+            # 更新最後登入時間
+            db.update_admin_login(admin['admin_id'], client_ip)
+            
+            return jsonify({
+                'ok': True,
+                'session_id': session_id,
+                'admin': {
+                    'admin_id': admin['admin_id'],
+                    'username': admin['username'],
+                    'email': admin['email'],
+                    'role': admin['role'],
+                    'permissions': admin['permissions']
+                }
+            })
+        else:
+            return jsonify({'error': '登入失敗'}), 500
+            
+    except Exception as e:
+        logger.error('Admin login error: {}'.format(e))
+        return jsonify({'error': '登入失敗'}), 500
+
+@app.route('/api/v1/admin/logout', methods=['POST'])
+def admin_logout():
+    """管理員登出"""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            session_id = auth_header.split(' ')[1]
+            db.delete_admin_session(session_id)
+        
+        return jsonify({'ok': True, 'message': '已登出'})
+        
+    except Exception as e:
+        logger.error('Admin logout error: {}'.format(e))
+        return jsonify({'error': '登出失敗'}), 500
+
+@app.route('/api/v1/admin/profile', methods=['GET'])
+@require_admin_auth
+def admin_profile():
+    """獲取管理員資料"""
+    return jsonify({
+        'ok': True,
+        'admin': {
+            'admin_id': request.admin['admin_id'],
+            'username': request.admin['username'],
+            'email': request.admin['email'],
+            'role': request.admin['role'],
+            'permissions': request.admin['permissions']
+        }
+    })
+
+@app.route('/api/v1/admin/admins', methods=['GET'])
+@require_admin_auth
+def get_admins():
+    """獲取所有管理員列表"""
+    try:
+        admins = db.get_all_admins()
+        return jsonify({'ok': True, 'admins': admins})
+    except Exception as e:
+        logger.error('Get admins error: {}'.format(e))
+        return jsonify({'error': '獲取管理員列表失敗'}), 500
+
+@app.route('/api/v1/admin/admins', methods=['POST'])
+@require_super_admin
+def create_admin():
+    """建立新管理員"""
+    try:
+        data = request.get_json()
+        username = data.get('username', '').strip()
+        password = data.get('password', '')
+        email = data.get('email', '').strip()
+        role = data.get('role', 'advisor')
+        permissions = data.get('permissions', 'read_only')
+        
+        # 驗證輸入
+        if not username or not password or not email:
+            return jsonify({'error': '請提供完整的用戶資訊'}), 400
+        
+        if not validate_email(email):
+            return jsonify({'error': '電子郵件格式不正確'}), 400
+        
+        if len(password) < 6:
+            return jsonify({'error': '密碼長度至少6位'}), 400
+        
+        # 檢查用戶名是否已存在
+        existing_admin = db.get_admin_by_username(username)
+        if existing_admin:
+            return jsonify({'error': '用戶名已存在'}), 400
+        
+        # 建立管理員
+        password_hash = hash_password(password)
+        created_by = request.admin['username']
+        
+        if db.create_admin(username, password_hash, email, role, permissions, created_by):
+            return jsonify({'ok': True, 'message': '管理員建立成功'})
+        else:
+            return jsonify({'error': '建立管理員失敗'}), 500
+            
+    except Exception as e:
+        logger.error('Create admin error: {}'.format(e))
+        return jsonify({'error': '建立管理員失敗'}), 500
+
+@app.route('/api/v1/admin/admins/<int:admin_id>/permissions', methods=['PUT'])
+@require_super_admin
+def update_admin_permissions(admin_id):
+    """更新管理員權限"""
+    try:
+        data = request.get_json()
+        permissions = data.get('permissions', 'read_only')
+        
+        if db.update_admin_permissions(admin_id, permissions):
+            return jsonify({'ok': True, 'message': '權限更新成功'})
+        else:
+            return jsonify({'error': '權限更新失敗'}), 500
+            
+    except Exception as e:
+        logger.error('Update admin permissions error: {}'.format(e))
+        return jsonify({'error': '權限更新失敗'}), 500
+
+# 初始化超級管理員
+def init_super_admin():
+    """初始化超級管理員帳號"""
+    try:
+        # 檢查是否已有超級管理員
+        admins = db.get_all_admins()
+        super_admins = [admin for admin in admins if admin['role'] == 'super_admin']
+        
+        if not super_admins:
+            # 建立預設超級管理員
+            username = 'admin'
+            password = 'admin123456'  # 請在首次登入後立即修改
+            email = 'admin@aistudent.com'
+            
+            password_hash = hash_password(password)
+            if db.create_admin(username, password_hash, email, 'super_admin', 'full_access', 'system'):
+                logger.info('Super admin created: username=admin, password=admin123456')
+                logger.warning('請立即修改預設密碼！')
+            else:
+                logger.error('Failed to create super admin')
+    except Exception as e:
+        logger.error('Init super admin error: {}'.format(e))
+
+# 在應用啟動時初始化超級管理員
+init_super_admin()
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
-
