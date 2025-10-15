@@ -6,8 +6,7 @@ import jwt
 import json
 from datetime import datetime, timedelta
 import google.generativeai as genai
-from google.oauth2 import id_token
-from google.auth.transport import requests
+# Google OAuth 相關導入已移除，使用標準 requests 庫
 from database import DatabaseManager
 import urllib.parse
 import time
@@ -165,52 +164,7 @@ def health_check():
 def api_health_check():
     return health_check()
 
-# Google OAuth 驗證
-@app.route('/api/v1/auth/google/verify', methods=['POST'])
-def verify_google_token():
-    # 速率限制
-    client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr)
-    if not check_rate_limit(client_ip):
-        return jsonify({'ok': False, 'error': 'rate_limit_exceeded'}), 429
-    
-    try:
-        data = request.get_json()
-        id_token_str = data.get('idToken')
-        
-        if not id_token_str:
-            return jsonify({'ok': False, 'error': 'missing idToken'}), 400
-        
-        # 驗證 Google ID Token
-        idinfo = id_token.verify_oauth2_token(
-            id_token_str, requests.Request(), GOOGLE_CLIENT_ID)
-        
-        user = {
-            'userId': idinfo['sub'],
-            'email': idinfo['email'],
-            'name': idinfo['name'],
-            'avatar': idinfo.get('picture')
-        }
-        
-        # 儲存用戶資料到資料庫
-        db.save_user(user)
-        
-        # 記錄使用統計
-        db.save_usage_stat({
-            'user_id': user['userId'],
-            'action_type': 'login',
-            'action_details': {'method': 'google'}
-        })
-        
-        # 簽發 JWT
-        payload = user.copy()
-        payload['exp'] = datetime.utcnow() + timedelta(days=7)
-        token = jwt.encode(payload, SESSION_SECRET, algorithm='HS256')
-        
-        return jsonify({'ok': True, 'token': token, 'user': user})
-        
-    except Exception as e:
-        logger.error('Google verify error: {}'.format(e))
-        return jsonify({'ok': False, 'error': 'verify_failed'}), 401
+# Google verify 端點已移除，改用直接的 OAuth 回調流程
 
 @app.route('/auth/google/callback', methods=['GET'])
 def google_callback():
