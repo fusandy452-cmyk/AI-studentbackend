@@ -84,11 +84,31 @@ def gemini_generate_text(prompt):
         model = genai.GenerativeModel(GEMINI_MODEL)
         res = model.generate_content(prompt)
         
-        if res.text:
-            logger.info(f"Gemini response generated successfully, length: {len(res.text)}")
-            return res.text
-        else:
-            logger.warning("Gemini returned empty response")
+        # 修復 response.text 錯誤
+        try:
+            if hasattr(res, 'text') and res.text:
+                logger.info(f"Gemini response generated successfully, length: {len(res.text)}")
+                return res.text
+            elif hasattr(res, 'candidates') and res.candidates:
+                # 嘗試從 candidates 中獲取文本
+                candidate = res.candidates[0]
+                if hasattr(candidate, 'content') and candidate.content:
+                    if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                        text_parts = []
+                        for part in candidate.content.parts:
+                            if hasattr(part, 'text') and part.text:
+                                text_parts.append(part.text)
+                        if text_parts:
+                            text = ''.join(text_parts)
+                            logger.info(f"Gemini response generated from candidates, length: {len(text)}")
+                            return text
+                logger.warning("Gemini returned empty response from candidates")
+                return ""
+            else:
+                logger.warning("Gemini returned empty response")
+                return ""
+        except Exception as text_error:
+            logger.error(f"Error accessing Gemini response text: {text_error}")
             return ""
     except Exception as e:
         logger.error(f"Gemini API error: {e}")
@@ -1059,7 +1079,8 @@ def chat():
                 else:
                     logger.warning(f"No profile found for user_id: {user_id}")
         
-        logger.info(f"Final user profile: {bool(user_profile)}")
+        logger.info(f"Final user profile: {user_profile}")
+        logger.info(f"User profile keys: {list(user_profile.keys()) if user_profile else 'No profile'}")
         
         # 構建 Gemini 提示
         # 載入知識庫內容
@@ -1088,7 +1109,7 @@ CRITICAL RESPONSE GUIDELINES:
 
 Please respond in English and provide focused, actionable advice.""".format(
                 user_role,
-                json.dumps(user_profile, indent=2) if user_profile else 'No profile data available',
+                json.dumps(user_profile, indent=2, ensure_ascii=False) if user_profile else 'No profile data available',
                 knowledge_base
             )
             
@@ -1113,20 +1134,23 @@ MANDATORY FORMATTING:
 用戶角色：{}
 用戶資料：{}
 
+**重要：你必須根據上述用戶資料來回答問題，不要重複詢問用戶已經提供的資訊！**
+
 知識庫：
 {}
 
 重要回覆原則：
 1. **優先回答用戶問題** - 必須先直接回答用戶的具體問題，提供實用資訊
-2. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
-3. **強制要求**：每個段落之間必須有空行分隔，段落必須換行
-4. 使用項目符號 (•) 列出要點，每個要點單獨一行
-5. 使用 **粗體** 標示重要段落
-6. **回答結構**：先回答問題 → 提供詳細資訊 → 最後提出 1 個相關問題
-7. 每次回覆最多 3-4 個重點
-8. **格式要求**：絕對不要讓段落連在一起，每個主題段落後必須換行
-9. 總是參考知識庫提供具體資訊
-10. **回覆格式範例**：
+2. **使用用戶資料** - 絕對不要詢問用戶已經提供的資訊（如預算、國家偏好、學歷等）
+3. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
+4. **強制要求**：每個段落之間必須有空行分隔，段落必須換行
+5. 使用項目符號 (•) 列出要點，每個要點單獨一行
+6. 使用 **粗體** 標示重要段落
+7. **回答結構**：先回答問題 → 提供詳細資訊 → 最後提出 1 個相關問題
+8. 每次回覆最多 3-4 個重點
+9. **格式要求**：絕對不要讓段落連在一起，每個主題段落後必須換行
+10. 總是參考知識庫提供具體資訊
+11. **回覆格式範例**：
     **直接回答**
     [空行]
     詳細說明
@@ -1138,7 +1162,7 @@ MANDATORY FORMATTING:
 
 請用中文回應，提供有針對性的建議。""".format(
                 user_role,
-                json.dumps(user_profile, indent=2) if user_profile else '無資料',
+                json.dumps(user_profile, indent=2, ensure_ascii=False) if user_profile else '無資料',
                 knowledge_base
             )
             
