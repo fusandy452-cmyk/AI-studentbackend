@@ -35,6 +35,40 @@ GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
 LINE_CHANNEL_ID = os.getenv('LINE_CHANNEL_ID')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
 
+# 載入知識庫
+def load_knowledge_base():
+    """載入留學顧問知識庫"""
+    try:
+        knowledge_path = os.path.join(os.path.dirname(__file__), 'knowledge')
+        
+        # 載入 Markdown 知識庫
+        md_file = os.path.join(knowledge_path, 'AI留學顧問_KB_美國大學申請_v2025-10-14.md')
+        if os.path.exists(md_file):
+            with open(md_file, 'r', encoding='utf-8') as f:
+                md_content = f.read()
+        else:
+            md_content = ""
+        
+        # 載入 FAQ 知識庫
+        jsonl_file = os.path.join(knowledge_path, 'AI留學顧問_FAQ_美國大學申請_v2025-10-14.jsonl')
+        faq_content = ""
+        if os.path.exists(jsonl_file):
+            with open(jsonl_file, 'r', encoding='utf-8') as f:
+                faq_items = []
+                for line in f:
+                    try:
+                        item = json.loads(line.strip())
+                        faq_items.append(f"Q: {item.get('question', '')}\nA: {item.get('answer', '')}")
+                    except:
+                        continue
+                faq_content = "\n\n".join(faq_items)
+        
+        return f"MARKDOWN KNOWLEDGE BASE:\n{md_content}\n\nFAQ KNOWLEDGE BASE:\n{faq_content}"
+        
+    except Exception as e:
+        logger.error(f"Error loading knowledge base: {e}")
+        return "Knowledge base not available"
+
 # 初始化 Gemini AI
 def use_gemini():
     return bool(GEMINI_API_KEY)
@@ -446,6 +480,410 @@ def get_user_profile_data(profile_id):
         logger.error(f'Error retrieving user profile: {e}')
         return jsonify({'ok': False, 'error': 'Internal server error'}), 500
 
+@app.route('/api/v1/user/check-profile', methods=['GET'])
+@verify_jwt_token
+def check_user_profile():
+    """檢查用戶是否有設定資料"""
+    try:
+        user_id = request.user['user_id']
+        
+        # 查找用戶的所有 profile
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT profile_id, user_role, student_name, parent_name, created_at 
+            FROM user_profiles 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC
+        ''', (user_id,))
+        
+        profiles = cursor.fetchall()
+        conn.close()
+        
+        if profiles:
+            # 返回最新的 profile 資料
+            latest_profile = profiles[0]
+            return jsonify({
+                'ok': True, 
+                'has_profile': True,
+                'profile_id': latest_profile[0],
+                'user_role': latest_profile[1],
+                'profile_data': {
+                    'profile_id': latest_profile[0],
+                    'user_role': latest_profile[1],
+                    'student_name': latest_profile[2],
+                    'parent_name': latest_profile[3],
+                    'created_at': latest_profile[4]
+                }
+            })
+        else:
+            return jsonify({
+                'ok': True,
+                'has_profile': False
+            })
+            
+    except Exception as e:
+        logger.error(f'Error checking user profile: {e}')
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/user/update-profile/<profile_id>', methods=['PUT'])
+@verify_jwt_token
+def update_user_profile(profile_id):
+    """更新用戶設定資料"""
+    try:
+        user_id = request.user['user_id']
+        data = request.get_json()
+        
+        # 驗證 profile 是否屬於該用戶
+        existing_profile = db.get_user_profile(profile_id)
+        if not existing_profile:
+            return jsonify({'ok': False, 'error': 'Profile not found'}), 404
+            
+        if existing_profile.get('user_id') != user_id:
+            return jsonify({'ok': False, 'error': 'Access denied'}), 403
+        
+        # 更新資料庫
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # 準備更新資料
+        update_fields = []
+        update_values = []
+        
+        if 'student_name' in data:
+            update_fields.append('student_name = ?')
+            update_values.append(data['student_name'])
+        if 'student_email' in data:
+            update_fields.append('student_email = ?')
+            update_values.append(data['student_email'])
+        if 'parent_name' in data:
+            update_fields.append('parent_name = ?')
+            update_values.append(data['parent_name'])
+        if 'parent_email' in data:
+            update_fields.append('parent_email = ?')
+            update_values.append(data['parent_email'])
+        if 'relationship' in data:
+            update_fields.append('relationship = ?')
+            update_values.append(data['relationship'])
+        if 'child_name' in data:
+            update_fields.append('child_name = ?')
+            update_values.append(data['child_name'])
+        if 'child_email' in data:
+            update_fields.append('child_email = ?')
+            update_values.append(data['child_email'])
+        if 'citizenship' in data:
+            update_fields.append('citizenship = ?')
+            update_values.append(data['citizenship'])
+        if 'gpa' in data:
+            update_fields.append('gpa = ?')
+            update_values.append(data['gpa'])
+        if 'degree' in data:
+            update_fields.append('degree = ?')
+            update_values.append(data['degree'])
+        if 'countries' in data:
+            update_fields.append('countries = ?')
+            update_values.append(json.dumps(data['countries']))
+        if 'budget' in data:
+            update_fields.append('budget = ?')
+            update_values.append(data['budget'])
+        if 'target_intake' in data:
+            update_fields.append('target_intake = ?')
+            update_values.append(data['target_intake'])
+        if 'user_role' in data:
+            update_fields.append('user_role = ?')
+            update_values.append(data['user_role'])
+        
+        # 添加更新時間
+        update_fields.append('updated_at = ?')
+        update_values.append(datetime.now().isoformat())
+        
+        # 添加 WHERE 條件
+        update_values.append(profile_id)
+        
+        if update_fields:
+            sql = f"UPDATE user_profiles SET {', '.join(update_fields)} WHERE profile_id = ?"
+            cursor.execute(sql, update_values)
+            conn.commit()
+            
+            logger.info(f"User profile updated: {profile_id}")
+            
+        conn.close()
+        
+        return jsonify({'ok': True, 'message': 'Profile updated successfully'})
+        
+    except Exception as e:
+        logger.error(f'Error updating user profile: {e}')
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/user/notification-settings', methods=['GET', 'POST'])
+@verify_jwt_token
+def user_notification_settings():
+    """獲取或更新用戶通知設定"""
+    try:
+        user_id = request.user['user_id']
+        
+        if request.method == 'GET':
+            # 獲取通知設定
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT email_notifications, push_notifications, notification_frequency
+                FROM user_settings 
+                WHERE user_id = ?
+            ''', (user_id,))
+            
+            settings = cursor.fetchone()
+            conn.close()
+            
+            if settings:
+                return jsonify({
+                    'ok': True,
+                    'data': {
+                        'email_notifications': bool(settings[0]),
+                        'push_notifications': bool(settings[1]),
+                        'notification_frequency': settings[2] or 'daily'
+                    }
+                })
+            else:
+                return jsonify({
+                    'ok': True,
+                    'data': {
+                        'email_notifications': False,
+                        'push_notifications': True,
+                        'notification_frequency': 'daily'
+                    }
+                })
+                
+        elif request.method == 'POST':
+            # 更新通知設定
+            data = request.get_json()
+            
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            
+            # 檢查是否已有設定
+            cursor.execute('SELECT user_id FROM user_settings WHERE user_id = ?', (user_id,))
+            exists = cursor.fetchone()
+            
+            if exists:
+                # 更新現有設定
+                cursor.execute('''
+                    UPDATE user_settings 
+                    SET email_notifications = ?, 
+                        push_notifications = ?, 
+                        notification_frequency = ?,
+                        updated_at = ?
+                    WHERE user_id = ?
+                ''', (
+                    data.get('email_notifications', False),
+                    data.get('push_notifications', True),
+                    data.get('notification_frequency', 'daily'),
+                    datetime.now().isoformat(),
+                    user_id
+                ))
+            else:
+                # 創建新設定
+                cursor.execute('''
+                    INSERT INTO user_settings 
+                    (user_id, email_notifications, push_notifications, notification_frequency, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (
+                    user_id,
+                    data.get('email_notifications', False),
+                    data.get('push_notifications', True),
+                    data.get('notification_frequency', 'daily'),
+                    datetime.now().isoformat(),
+                    datetime.now().isoformat()
+                ))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Notification settings updated for user: {user_id}")
+            
+            return jsonify({'ok': True, 'message': 'Notification settings updated successfully'})
+            
+    except Exception as e:
+        logger.error(f'Error handling notification settings: {e}')
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/parent/student-progress', methods=['GET'])
+@verify_jwt_token
+def get_student_progress():
+    """家長查詢學生諮詢進度"""
+    try:
+        user_id = request.user['user_id']
+        
+        # 檢查用戶是否為家長
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # 獲取家長的 profile
+        cursor.execute('''
+            SELECT profile_id, user_role, child_email, child_name
+            FROM user_profiles 
+            WHERE user_id = ? AND user_role = 'parent'
+            ORDER BY created_at DESC
+            LIMIT 1
+        ''', (user_id,))
+        
+        parent_profile = cursor.fetchone()
+        if not parent_profile:
+            conn.close()
+            return jsonify({'ok': False, 'error': 'Parent profile not found'}), 404
+        
+        parent_profile_id, user_role, child_email, child_name = parent_profile
+        
+        # 查找學生的 profile（通過 email 匹配）
+        cursor.execute('''
+            SELECT profile_id, student_name, student_email, created_at, updated_at
+            FROM user_profiles 
+            WHERE student_email = ? AND user_role = 'student'
+            ORDER BY created_at DESC
+            LIMIT 1
+        ''', (child_email,))
+        
+        student_profile = cursor.fetchone()
+        if not student_profile:
+            conn.close()
+            return jsonify({
+                'ok': True,
+                'data': {
+                    'student_found': False,
+                    'message': 'Student profile not found. Please ensure the student has completed their profile setup.'
+                }
+            })
+        
+        student_profile_id, student_name, student_email, student_created_at, student_updated_at = student_profile
+        
+        # 獲取學生的聊天記錄統計
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as total_messages,
+                COUNT(DISTINCT DATE(created_at)) as active_days,
+                MAX(created_at) as last_activity
+            FROM chat_messages 
+            WHERE profile_id = ? AND message_type = 'user'
+        ''', (student_profile_id,))
+        
+        chat_stats = cursor.fetchone()
+        
+        # 獲取最近的聊天主題（通過 AI 回覆分析）
+        cursor.execute('''
+            SELECT message_content, created_at
+            FROM chat_messages 
+            WHERE profile_id = ? AND message_type = 'ai'
+            ORDER BY created_at DESC
+            LIMIT 5
+        ''', (student_profile_id,))
+        
+        recent_topics = cursor.fetchall()
+        
+        # 獲取使用統計
+        cursor.execute('''
+            SELECT action_type, COUNT(*) as count
+            FROM usage_stats 
+            WHERE profile_id = ?
+            GROUP BY action_type
+        ''', (student_profile_id,))
+        
+        usage_stats = cursor.fetchall()
+        
+        conn.close()
+        
+        # 分析諮詢進度
+        progress_analysis = analyze_student_progress(
+            chat_stats, 
+            recent_topics, 
+            usage_stats,
+            student_created_at
+        )
+        
+        return jsonify({
+            'ok': True,
+            'data': {
+                'student_found': True,
+                'student_info': {
+                    'name': student_name,
+                    'email': student_email,
+                    'profile_created': student_created_at,
+                    'last_updated': student_updated_at
+                },
+                'activity_stats': {
+                    'total_messages': chat_stats[0] if chat_stats else 0,
+                    'active_days': chat_stats[1] if chat_stats else 0,
+                    'last_activity': chat_stats[2] if chat_stats else None
+                },
+                'recent_topics': [
+                    {'content': topic[0][:100] + '...' if len(topic[0]) > 100 else topic[0], 'time': topic[1]} 
+                    for topic in recent_topics
+                ],
+                'usage_stats': [
+                    {'action': stat[0], 'count': stat[1]} for stat in usage_stats
+                ],
+                'progress_analysis': progress_analysis
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f'Error getting student progress: {e}')
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+def analyze_student_progress(chat_stats, recent_topics, usage_stats, profile_created):
+    """分析學生諮詢進度"""
+    try:
+        from datetime import datetime, timedelta
+        
+        now = datetime.now()
+        created_date = datetime.fromisoformat(profile_created.replace('Z', '+00:00')) if profile_created else now
+        days_since_creation = (now - created_date).days
+        
+        total_messages = chat_stats[0] if chat_stats else 0
+        active_days = chat_stats[1] if chat_stats else 0
+        
+        # 進度分析
+        progress_level = "beginner"
+        if total_messages > 20:
+            progress_level = "advanced"
+        elif total_messages > 10:
+            progress_level = "intermediate"
+        
+        # 活躍度分析
+        activity_level = "low"
+        if active_days > 5:
+            activity_level = "high"
+        elif active_days > 2:
+            activity_level = "medium"
+        
+        # 建議
+        suggestions = []
+        if total_messages < 5:
+            suggestions.append("建議學生多與AI顧問互動，提出具體的留學問題")
+        if active_days < 3:
+            suggestions.append("建議學生保持定期諮詢，建立持續的留學規劃習慣")
+        if days_since_creation > 7 and total_messages < 10:
+            suggestions.append("建議學生積極利用AI顧問資源，加速留學規劃進度")
+        
+        return {
+            'progress_level': progress_level,
+            'activity_level': activity_level,
+            'engagement_score': min(100, (total_messages * 5 + active_days * 10)),
+            'suggestions': suggestions,
+            'days_active': days_since_creation
+        }
+        
+    except Exception as e:
+        logger.error(f'Error analyzing student progress: {e}')
+        return {
+            'progress_level': 'unknown',
+            'activity_level': 'unknown',
+            'engagement_score': 0,
+            'suggestions': ['無法分析進度，請稍後再試'],
+            'days_active': 0
+        }
+
 # 認證配置
 @app.route('/api/v1/auth/config', methods=['GET'])
 def auth_config():
@@ -474,7 +912,7 @@ def verify_jwt_token(f):
             # 處理測試用的假 token
             if token == 'fake-jwt-token-for-testing':
                 request.user = {
-                    'userId': 'test-user',
+                    'user_id': 'test-user',
                     'email': 'test@example.com',
                     'name': 'Test User'
                 }
@@ -554,11 +992,17 @@ def chat():
         logger.info(f"User profile retrieved: {bool(user_profile)}")
         
         # 構建 Gemini 提示
+        # 載入知識庫內容
+        knowledge_base = load_knowledge_base()
+        
         if language == 'en':
             system_prompt = """You are a professional AI Study Abroad Advisor. You provide personalized, expert guidance for students and parents planning international education.
 
 User Role: {}
 User Profile: {}
+
+KNOWLEDGE BASE:
+{}
 
 CRITICAL RESPONSE GUIDELINES:
 1. Keep responses CONCISE and FOCUSED - answer the specific question asked
@@ -569,10 +1013,13 @@ CRITICAL RESPONSE GUIDELINES:
 6. Ask 1-2 follow-up questions to continue the conversation
 7. Maximum 3-4 main points per response
 8. FORCE: Each topic paragraph must have line breaks, never run together
+9. Always reference the knowledge base when providing specific information
+10. Format responses with proper line breaks and structure
 
 Please respond in English and provide focused, actionable advice.""".format(
                 user_role,
-                json.dumps(user_profile, indent=2) if user_profile else 'No profile data available'
+                json.dumps(user_profile, indent=2) if user_profile else 'No profile data available',
+                knowledge_base
             )
             
             if message and message.strip():
@@ -596,6 +1043,9 @@ MANDATORY FORMATTING:
 用戶角色：{}
 用戶資料：{}
 
+知識庫：
+{}
+
 重要回覆原則：
 1. 回覆要簡潔有重點 - 直接回答用戶的具體問題
 2. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
@@ -605,10 +1055,13 @@ MANDATORY FORMATTING:
 6. 提出 1-2 個後續問題延續對話
 7. 每次回覆最多 3-4 個重點
 8. 強制要求：每個主題段落後必須換行，不要連在一起
+9. 總是參考知識庫提供具體資訊
+10. 確保回覆格式正確，段落分明
 
 請用中文回應，提供有針對性的建議。""".format(
                 user_role,
-                json.dumps(user_profile, indent=2) if user_profile else '無資料'
+                json.dumps(user_profile, indent=2) if user_profile else '無資料',
+                knowledge_base
             )
             
             if message and message.strip():
@@ -656,35 +1109,42 @@ MANDATORY FORMATTING:
         
         logger.info(f"Generated reply length: {len(reply) if reply else 0}")
         
-        # 儲存聊天記錄到資料庫
-        if message and message.strip():
-            # 儲存用戶訊息
-            db.save_chat_message({
-                'profile_id': profile_id,
-                'user_id': request.user['user_id'],  # 修復字段名
-                'message_type': 'user',
-                'message_content': message,
-                'language': language,
-                'user_role': user_role
-            })
-            
-            # 儲存 AI 回覆
-            db.save_chat_message({
-                'profile_id': profile_id,
-                'user_id': request.user['user_id'],  # 修復字段名
-                'message_type': 'ai',
-                'message_content': reply,
-                'language': language,
-                'user_role': user_role
-            })
-            
-            # 記錄使用統計
-            db.save_usage_stat({
-                'user_id': request.user['user_id'],  # 修復字段名
-                'profile_id': profile_id,
-                'action_type': 'chat_message',
-                'action_details': {'language': language, 'user_role': user_role}
-            })
+        # 儲存聊天記錄到資料庫（只有在有 profile_id 時才儲存）
+        if message and message.strip() and profile_id:
+            try:
+                # 儲存用戶訊息
+                db.save_chat_message({
+                    'profile_id': profile_id,
+                    'user_id': request.user['user_id'],  # 修復字段名
+                    'message_type': 'user',
+                    'message_content': message,
+                    'language': language,
+                    'user_role': user_role
+                })
+                
+                # 儲存 AI 回覆
+                db.save_chat_message({
+                    'profile_id': profile_id,
+                    'user_id': request.user['user_id'],  # 修復字段名
+                    'message_type': 'ai',
+                    'message_content': reply,
+                    'language': language,
+                    'user_role': user_role
+                })
+                
+                # 記錄使用統計
+                db.save_usage_stat({
+                    'user_id': request.user['user_id'],  # 修復字段名
+                    'profile_id': profile_id,
+                    'action_type': 'chat_message',
+                    'action_details': {'language': language, 'user_role': user_role}
+                })
+                logger.info(f"Chat messages saved successfully for profile_id: {profile_id}")
+            except Exception as e:
+                logger.error(f"Error saving chat messages: {e}")
+                # 不影響聊天功能，繼續返回 AI 回覆
+        else:
+            logger.info(f"Skipping chat message save - message: {bool(message and message.strip())}, profile_id: {bool(profile_id)}")
         
         return jsonify({'ok': True, 'reply': reply})
         
