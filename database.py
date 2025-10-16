@@ -494,16 +494,16 @@ class DatabaseManager:
             if row:
                 # 解析 countries JSON
                 countries = []
-                if row[14]:  # countries 欄位
+                if row[15]:  # countries 欄位
                     try:
-                        countries = json.loads(row[14])
+                        countries = json.loads(row[15])
                     except:
                         countries = []
                 
                 return {
-                    'profile_id': row[0],
-                    'user_id': row[1],
-                    'created_at': row[2],
+                    'id': row[0],
+                    'profile_id': row[1],
+                    'user_id': row[2],
                     'user_role': row[3],
                     'student_name': row[4],
                     'student_email': row[5],
