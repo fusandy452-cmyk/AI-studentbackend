@@ -116,7 +116,25 @@ def gemini_generate_text(prompt):
 
 # 初始化資料庫
 try:
-    db = DatabaseManager()
+    # 使用 Zeabur 的持久化存儲目錄
+    import os
+    persistent_dir = '/data'
+    if os.path.exists(persistent_dir):
+        db_path = os.path.join(persistent_dir, 'ai_study_advisor.db')
+        logger.info(f"Using persistent storage: {db_path}")
+    else:
+        # 如果持久化目錄不存在，使用當前目錄
+        db_path = 'ai_study_advisor.db'
+        logger.warning(f"Persistent directory not found, using local path: {db_path}")
+    
+    db = DatabaseManager(db_path=db_path)
+    
+    # 創建初始備份
+    try:
+        db.create_backup()
+        logger.info("Initial database backup created")
+    except Exception as e:
+        logger.warning(f"Failed to create initial backup: {e}")
     
     # 確保 user_settings 表格存在（遷移機制）
     try:
@@ -141,6 +159,22 @@ try:
         logger.error(f"User settings table creation failed: {e}")
     
     logger.info("Database initialized successfully")
+    
+    # 檢查並創建定期備份
+    try:
+        # 檢查是否有現有的備份，如果沒有則創建一個
+        backup_dir = os.path.join(os.path.dirname(db.db_path), 'backups')
+        if os.path.exists(backup_dir):
+            backup_files = [f for f in os.listdir(backup_dir) if f.startswith('ai_study_advisor_backup_')]
+            if not backup_files:
+                db.create_backup()
+                logger.info("Created initial backup as no existing backups found")
+        else:
+            db.create_backup()
+            logger.info("Created initial backup in new backup directory")
+    except Exception as e:
+        logger.warning(f"Backup check failed: {e}")
+        
 except Exception as e:
     logger.error(f"Database initialization failed: {e}")
     db = None
@@ -1637,6 +1671,48 @@ def admin_restore_database():
     except Exception as e:
         logger.error(f"Database restoration error: {e}")
         return jsonify({'ok': False, 'error': 'Database restoration failed'}), 500
+
+@app.route('/api/v1/admin/database-status', methods=['GET'])
+def admin_database_status():
+    """檢查資料庫狀態和備份情況"""
+    try:
+        import os
+        
+        # 基本資料庫資訊
+        db_info = {
+            'database_path': db.db_path,
+            'database_exists': os.path.exists(db.db_path),
+            'database_size': os.path.getsize(db.db_path) if os.path.exists(db.db_path) else 0,
+            'persistent_dir': os.path.dirname(db.db_path),
+            'persistent_dir_exists': os.path.exists(os.path.dirname(db.db_path))
+        }
+        
+        # 備份資訊
+        backup_dir = os.path.join(os.path.dirname(db.db_path), 'backups')
+        backup_info = {
+            'backup_dir': backup_dir,
+            'backup_dir_exists': os.path.exists(backup_dir),
+            'backup_count': 0,
+            'latest_backup': None,
+            'backup_files': []
+        }
+        
+        if os.path.exists(backup_dir):
+            backup_files = [f for f in os.listdir(backup_dir) if f.startswith('ai_study_advisor_backup_')]
+            backup_info['backup_count'] = len(backup_files)
+            backup_info['backup_files'] = sorted(backup_files)
+            if backup_files:
+                backup_info['latest_backup'] = sorted(backup_files)[-1]
+        
+        return jsonify({
+            'ok': True,
+            'database_info': db_info,
+            'backup_info': backup_info
+        })
+        
+    except Exception as e:
+        logger.error(f"Database status check error: {e}")
+        return jsonify({'ok': False, 'error': 'Failed to check database status'}), 500
 
 def analyze_student_progress(chat_stats, recent_topics, usage_stats, created_at):
     """分析學生諮詢進度"""
