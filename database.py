@@ -199,8 +199,32 @@ class DatabaseManager:
             import shutil
             import datetime
             
-            backup_dir = os.path.join(os.path.dirname(self.db_path), 'backups')
-            os.makedirs(backup_dir, exist_ok=True)
+            # 優先使用持久化目錄的備份路徑
+            backup_dirs = [
+                '/data/backups',  # Zeabur 持久化目錄
+                os.path.join(os.path.dirname(self.db_path), 'backups'),  # 相對路徑
+                './backups'  # 當前目錄
+            ]
+            
+            backup_dir = None
+            for backup_path in backup_dirs:
+                try:
+                    os.makedirs(backup_path, exist_ok=True)
+                    # 測試是否可寫入
+                    test_file = os.path.join(backup_path, 'test_write')
+                    with open(test_file, 'w') as f:
+                        f.write('test')
+                    os.remove(test_file)
+                    backup_dir = backup_path
+                    print(f'Using backup directory: {backup_dir}')
+                    break
+                except Exception as e:
+                    print(f'Cannot use backup directory {backup_path}: {e}')
+                    continue
+            
+            if not backup_dir:
+                print('No writable backup directory found')
+                return
             
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             backup_path = os.path.join(backup_dir, f'ai_study_advisor_backup_{timestamp}.db')
@@ -219,19 +243,38 @@ class DatabaseManager:
     def restore_from_backup(self):
         """從最新備份恢復資料庫"""
         try:
-            backup_dir = os.path.join(os.path.dirname(self.db_path), 'backups')
-            if not os.path.exists(backup_dir):
-                print('No backup directory found')
-                return False
-                
-            backup_files = sorted([f for f in os.listdir(backup_dir) if f.startswith('ai_study_advisor_backup_')])
-            if not backup_files:
-                print('No backup files found')
+            # 嘗試多個可能的備份目錄
+            possible_backup_dirs = [
+                os.path.join(os.path.dirname(self.db_path), 'backups'),  # 相對路徑
+                '/data/backups',  # Zeabur 持久化目錄
+                './backups',  # 當前目錄
+                'backups'  # 當前目錄的子目錄
+            ]
+            
+            backup_files = []
+            backup_dir = None
+            
+            for backup_path in possible_backup_dirs:
+                if os.path.exists(backup_path):
+                    files = [f for f in os.listdir(backup_path) if f.startswith('ai_study_advisor_backup_')]
+                    if files:
+                        backup_files = sorted(files)
+                        backup_dir = backup_path
+                        print(f'Found backup directory: {backup_dir}')
+                        break
+            
+            if not backup_files or not backup_dir:
+                print('No backup files found in any directory')
                 return False
                 
             latest_backup = os.path.join(backup_dir, backup_files[-1])
+            
+            # 確保目標目錄存在
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+            
             shutil.copy2(latest_backup, self.db_path)
             print(f'Database restored from: {latest_backup}')
+            print(f'Restored to: {self.db_path}')
             return True
             
         except Exception as e:
@@ -454,7 +497,14 @@ class DatabaseManager:
         
         profiles = []
         for row in cursor.fetchall():
-            countries = json.loads(row[13]) if row[13] else []
+            # 解析 countries JSON
+            countries = []
+            if row[14]:  # countries 欄位 (index 14)
+                try:
+                    countries = json.loads(row[14])
+                except:
+                    countries = []
+            
             profiles.append({
                 'id': row[0],
                 'profile_id': row[1],

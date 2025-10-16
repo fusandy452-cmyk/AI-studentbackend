@@ -119,9 +119,25 @@ try:
     # 使用 Zeabur 的持久化存儲目錄
     import os
     persistent_dir = '/data'
+    
+    # 確保持久化目錄存在
+    if not os.path.exists(persistent_dir):
+        try:
+            os.makedirs(persistent_dir, exist_ok=True)
+            logger.info(f"Created persistent directory: {persistent_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to create persistent directory: {e}")
+    
+    # 優先使用持久化存儲
     if os.path.exists(persistent_dir):
         db_path = os.path.join(persistent_dir, 'ai_study_advisor.db')
         logger.info(f"Using persistent storage: {db_path}")
+        
+        # 檢查是否已有資料庫文件
+        if os.path.exists(db_path):
+            logger.info(f"Existing database found: {db_path}")
+        else:
+            logger.info(f"Creating new database: {db_path}")
     else:
         # 如果持久化目錄不存在，使用當前目錄
         db_path = 'ai_study_advisor.db'
@@ -162,18 +178,29 @@ try:
     
     # 檢查並創建定期備份
     try:
-        # 檢查是否有現有的備份，如果沒有則創建一個
-        backup_dir = os.path.join(os.path.dirname(db.db_path), 'backups')
-        if os.path.exists(backup_dir):
-            backup_files = [f for f in os.listdir(backup_dir) if f.startswith('ai_study_advisor_backup_')]
-            if not backup_files:
-                db.create_backup()
-                logger.info("Created initial backup as no existing backups found")
-        else:
-            db.create_backup()
-            logger.info("Created initial backup in new backup directory")
+        # 檢查資料庫是否有資料，如果沒有則嘗試從備份恢復
+        try:
+            test_conn = db.get_connection()
+            cursor = test_conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users")
+            user_count = cursor.fetchone()[0]
+            test_conn.close()
+            
+            if user_count == 0:
+                logger.info("Database is empty, attempting to restore from backup")
+                if db.restore_from_backup():
+                    logger.info("Successfully restored database from backup")
+                else:
+                    logger.info("No backup found or restore failed, starting with empty database")
+        except Exception as e:
+            logger.warning(f"Database check failed: {e}")
+        
+        # 創建初始備份
+        db.create_backup()
+        logger.info("Created initial backup")
+        
     except Exception as e:
-        logger.warning(f"Backup check failed: {e}")
+        logger.warning(f"Backup initialization failed: {e}")
         
 except Exception as e:
     logger.error(f"Database initialization failed: {e}")
