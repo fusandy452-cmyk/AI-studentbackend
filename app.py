@@ -1123,11 +1123,19 @@ MANDATORY FORMATTING:
 • Each paragraph MUST be separated by blank lines
 • Use bullet points (•) for lists, each on separate line
 • Use **bold** for important sections
-• Ask 1-2 follow-up questions
+• **Focus: Provide rich, specific content with actual recommendations, school names, data**
+• **Only ask questions when absolutely necessary, don't always ask questions**
 • Keep under 200 words
 • NEVER run paragraphs together - always add line breaks between topics""".format(message)
             else:
-                user_prompt = """Provide a brief, welcoming message for this {} (under 100 words). Use emojis and ask 1-2 questions to start the conversation.""".format(user_role)
+                user_prompt = """Provide a brief, welcoming message for this {} (under 100 words). 
+
+Format requirements:
+• Use emojis (🎓📚💰🏠✈️📋)
+• Clear paragraphs with proper line breaks
+• **Focus: Provide useful study abroad information and advice, don't always ask questions**
+• Optionally ask 1 question to start conversation (only when truly needed)
+• Keep concise and focused""".format(user_role)
         else:
             system_prompt = """你是一位專業的AI留學顧問。你為計劃國際教育的學生和家長提供個人化的專業指導。
 
@@ -1140,17 +1148,18 @@ MANDATORY FORMATTING:
 {}
 
 重要回覆原則：
-1. **優先回答用戶問題** - 必須先直接回答用戶的具體問題，提供實用資訊
+1. **優先提供具體內容** - 必須直接回答用戶問題並提供實用的具體資訊
 2. **使用用戶資料** - 絕對不要詢問用戶已經提供的資訊（如預算、國家偏好、學歷等）
-3. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
-4. **強制要求**：每個段落之間必須有空行分隔，段落必須換行
-5. 使用項目符號 (•) 列出要點，每個要點單獨一行
-6. 使用 **粗體** 標示重要段落
-7. **回答結構**：先回答問題 → 提供詳細資訊 → 最後提出 1 個相關問題
-8. 每次回覆最多 3-4 個重點
-9. **格式要求**：絕對不要讓段落連在一起，每個主題段落後必須換行
-10. 總是參考知識庫提供具體資訊
-11. **回覆格式範例**：
+3. **重點：多提供內容，少問問題** - 盡可能提供詳細的具體建議和資訊
+4. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
+5. **強制要求**：每個段落之間必須有空行分隔，段落必須換行
+6. 使用項目符號 (•) 列出要點，每個要點單獨一行
+7. 使用 **粗體** 標示重要段落
+8. **回答結構**：先回答問題 → 提供詳細資訊 → 只有在絕對必要時才問 1 個問題
+9. 每次回覆提供豐富的具體內容，包含學校名稱、具體建議、實際數據等
+10. **格式要求**：絕對不要讓段落連在一起，每個主題段落後必須換行
+11. 總是參考知識庫提供具體資訊和實際建議
+12. **回覆格式範例**：
     **直接回答**
     [空行]
     詳細說明
@@ -1176,7 +1185,8 @@ MANDATORY FORMATTING:
 • 每個段落之間必須有空行分隔
 • 使用項目符號 (•) 列出要點，每個要點單獨一行
 • 使用 **粗體** 標示重要段落
-• 提出 1-2 個後續問題延續對話
+• **重點：提供豐富的具體內容，包含實際建議、學校名稱、數據等**
+• **只有在絕對必要時才問問題，不要總是問問題**
 • 控制在 200 字以內
 • 絕對不要讓段落連在一起 - 主題段落間必須換行""".format(message)
             else:
@@ -1185,7 +1195,8 @@ MANDATORY FORMATTING:
 格式要求：
 • 使用 emoji (🎓📚💰🏠✈️📋)
 • 段落分明，適當換行
-• 提出 1-2 個問題開始對話
+• **重點：提供有用的留學資訊和建議，不要總是問問題**
+• 可選提出 1 個問題開始對話（只有在真正需要時）
 • 保持簡潔有重點""".format(user_role)
         
         full_prompt = "{}\n\n{}".format(system_prompt, user_prompt)
@@ -1577,9 +1588,9 @@ def admin_search_user():
             }
         })
         
-        except Exception as e:
-            logger.error(f"Admin search user error: {e}")
-            return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+    except Exception as e:
+        logger.error(f"Admin search user error: {e}")
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
 
 @app.route('/api/v1/admin/backup', methods=['POST'])
 def admin_backup_database():
