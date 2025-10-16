@@ -1392,6 +1392,15 @@ def admin_new():
 def debug_database():
     """調試用：查看資料庫內容"""
     try:
+        # 檢查資料庫狀態
+        db_info = {
+            'database_path': db.db_path,
+            'database_exists': os.path.exists(db.db_path),
+            'database_size': os.path.getsize(db.db_path) if os.path.exists(db.db_path) else 0,
+            'persistent_dir': os.path.dirname(db.db_path),
+            'persistent_dir_exists': os.path.exists(os.path.dirname(db.db_path))
+        }
+        
         conn = db.get_connection()
         cursor = conn.cursor()
         
@@ -1416,6 +1425,7 @@ def debug_database():
         
         return jsonify({
             'ok': True,
+            'database_info': db_info,
             'data': {
                 'users': [
                     {
@@ -1567,9 +1577,32 @@ def admin_search_user():
             }
         })
         
+        except Exception as e:
+            logger.error(f"Admin search user error: {e}")
+            return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/admin/backup', methods=['POST'])
+def admin_backup_database():
+    """管理員手動創建資料庫備份"""
+    try:
+        db.create_backup()
+        return jsonify({'ok': True, 'message': 'Backup created successfully'})
     except Exception as e:
-        logger.error(f"Admin search user error: {e}")
-        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+        logger.error(f"Backup creation error: {e}")
+        return jsonify({'ok': False, 'error': 'Backup creation failed'}), 500
+
+@app.route('/api/v1/admin/restore', methods=['POST'])
+def admin_restore_database():
+    """管理員從備份恢復資料庫"""
+    try:
+        success = db.restore_from_backup()
+        if success:
+            return jsonify({'ok': True, 'message': 'Database restored successfully'})
+        else:
+            return jsonify({'ok': False, 'error': 'No backup found or restoration failed'}), 404
+    except Exception as e:
+        logger.error(f"Database restoration error: {e}")
+        return jsonify({'ok': False, 'error': 'Database restoration failed'}), 500
 
 def analyze_student_progress(chat_stats, recent_topics, usage_stats, created_at):
     """分析學生諮詢進度"""

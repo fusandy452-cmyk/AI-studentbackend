@@ -18,6 +18,9 @@ class DatabaseManager:
             # 確保目錄存在
             os.makedirs(persistent_dir, exist_ok=True)
             self.db_path = os.path.join(persistent_dir, 'ai_study_advisor.db')
+            print(f'Database path: {self.db_path}')
+            print(f'Persistent directory exists: {os.path.exists(persistent_dir)}')
+            print(f'Database file exists: {os.path.exists(self.db_path)}')
         else:
             self.db_path = db_path
         self.init_database()
@@ -30,6 +33,12 @@ class DatabaseManager:
         """初始化資料庫和表格"""
         conn = self.get_connection()
         cursor = conn.cursor()
+        
+        # 啟用 WAL 模式以提高並發性和數據安全性
+        cursor.execute('PRAGMA journal_mode=WAL')
+        cursor.execute('PRAGMA synchronous=FULL')
+        cursor.execute('PRAGMA cache_size=1000')
+        cursor.execute('PRAGMA temp_store=MEMORY')
         
         # 用戶資料表
         cursor.execute('''
@@ -166,9 +175,68 @@ class DatabaseManager:
             )
         ''')
         
+        # 用戶設定表格
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT UNIQUE NOT NULL,
+                email_notifications BOOLEAN DEFAULT 0,
+                push_notifications BOOLEAN DEFAULT 1,
+                notification_frequency TEXT DEFAULT 'daily',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        
         conn.commit()
         conn.close()
         print('Database initialized successfully at: {}'.format(self.db_path))
+    
+    def create_backup(self):
+        """創建資料庫備份"""
+        try:
+            import shutil
+            import datetime
+            
+            backup_dir = os.path.join(os.path.dirname(self.db_path), 'backups')
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_path = os.path.join(backup_dir, f'ai_study_advisor_backup_{timestamp}.db')
+            
+            shutil.copy2(self.db_path, backup_path)
+            print(f'Database backup created: {backup_path}')
+            
+            # 只保留最近 5 個備份
+            backup_files = sorted([f for f in os.listdir(backup_dir) if f.startswith('ai_study_advisor_backup_')])
+            for old_backup in backup_files[:-5]:
+                os.remove(os.path.join(backup_dir, old_backup))
+                
+        except Exception as e:
+            print(f'Backup creation failed: {e}')
+    
+    def restore_from_backup(self):
+        """從最新備份恢復資料庫"""
+        try:
+            backup_dir = os.path.join(os.path.dirname(self.db_path), 'backups')
+            if not os.path.exists(backup_dir):
+                print('No backup directory found')
+                return False
+                
+            backup_files = sorted([f for f in os.listdir(backup_dir) if f.startswith('ai_study_advisor_backup_')])
+            if not backup_files:
+                print('No backup files found')
+                return False
+                
+            latest_backup = os.path.join(backup_dir, backup_files[-1])
+            shutil.copy2(latest_backup, self.db_path)
+            print(f'Database restored from: {latest_backup}')
+            return True
+            
+        except Exception as e:
+            print(f'Backup restoration failed: {e}')
+            return False
     
     def save_user(self, user_data):
         """儲存用戶資料"""
@@ -277,6 +345,10 @@ class DatabaseManager:
                 datetime.now().isoformat()
             ))
             conn.commit()
+            
+            # 創建備份
+            self.create_backup()
+            
             return True
         except Exception as e:
             print('Error saving user profile: {}'.format(e))
