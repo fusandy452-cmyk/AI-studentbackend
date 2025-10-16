@@ -1351,6 +1351,272 @@ def admin():
         logger.error(f"Error serving admin page: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@app.route('/admin-new.html')
+def admin_new():
+    """新版後台管理系統"""
+    try:
+        admin_path = os.path.join(os.path.dirname(__file__), 'admin-new.html')
+        if os.path.exists(admin_path):
+            return send_file(admin_path)
+        else:
+            return jsonify({'error': 'Admin page not found'}), 404
+    except Exception as e:
+        logger.error(f"Error serving admin page: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/v1/debug/database', methods=['GET'])
+def debug_database():
+    """調試用：查看資料庫內容"""
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # 查詢所有用戶
+        cursor.execute('SELECT * FROM users')
+        users = cursor.fetchall()
+        
+        # 查詢所有 profile
+        cursor.execute('SELECT * FROM user_profiles')
+        profiles = cursor.fetchall()
+        
+        # 查詢所有聊天記錄
+        cursor.execute('SELECT * FROM chat_messages LIMIT 10')
+        messages = cursor.fetchall()
+        
+        conn.close()
+        
+        return jsonify({
+            'ok': True,
+            'data': {
+                'users': [
+                    {
+                        'user_id': user[0],
+                        'email': user[1],
+                        'name': user[2],
+                        'provider': user[3],
+                        'provider_id': user[4],
+                        'avatar': user[5],
+                        'created_at': user[6]
+                    } for user in users
+                ],
+                'profiles': [
+                    {
+                        'profile_id': profile[0],
+                        'user_id': profile[1],
+                        'user_role': profile[2],
+                        'student_name': profile[3],
+                        'parent_name': profile[4],
+                        'created_at': profile[15]
+                    } for profile in profiles
+                ],
+                'recent_messages': [
+                    {
+                        'id': msg[0],
+                        'profile_id': msg[1],
+                        'message_type': msg[2],
+                        'message_content': msg[3][:100] + '...' if len(msg[3]) > 100 else msg[3],
+                        'created_at': msg[4]
+                    } for msg in messages
+                ]
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Debug database error: {e}")
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+@app.route('/api/v1/admin/search-user', methods=['POST'])
+def admin_search_user():
+    """管理員搜尋用戶並分析"""
+    try:
+        data = request.get_json()
+        search_term = data.get('search_term', '').strip()
+        
+        if not search_term:
+            return jsonify({'ok': False, 'error': '搜尋關鍵字不能為空'}), 400
+        
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        # 搜尋用戶 profile（根據姓名搜尋）
+        cursor.execute('''
+            SELECT profile_id, user_id, user_role, student_name, parent_name, 
+                   student_email, parent_email, relationship, child_name, child_email, 
+                   citizenship, gpa, degree, countries, budget, target_intake, 
+                   created_at, updated_at
+            FROM user_profiles 
+            WHERE student_name LIKE ? OR parent_name LIKE ? OR child_name LIKE ?
+            LIMIT 1
+        ''', (f'%{search_term}%', f'%{search_term}%', f'%{search_term}%'))
+        
+        profile_data = cursor.fetchone()
+        
+        if not profile_data:
+            conn.close()
+            return jsonify({'ok': True, 'data': None})
+        
+        # 構建 profile 資料
+        profile = {
+            'profile_id': profile_data[0],
+            'user_id': profile_data[1],
+            'user_role': profile_data[2],
+            'student_name': profile_data[3],
+            'parent_name': profile_data[4],
+            'student_email': profile_data[5],
+            'parent_email': profile_data[6],
+            'relationship': profile_data[7],
+            'child_name': profile_data[8],
+            'child_email': profile_data[9],
+            'citizenship': profile_data[10],
+            'gpa': profile_data[11],
+            'degree': profile_data[12],
+            'countries': json.loads(profile_data[13]) if profile_data[13] else [],
+            'budget': profile_data[14],
+            'target_intake': profile_data[15],
+            'created_at': profile_data[16],
+            'updated_at': profile_data[17]
+        }
+        
+        # 獲取聊天記錄統計
+        cursor.execute('''
+            SELECT 
+                COUNT(*) as total_messages,
+                COUNT(DISTINCT DATE(created_at)) as active_days,
+                MAX(created_at) as last_activity
+            FROM chat_messages 
+            WHERE profile_id = ? AND message_type = 'user'
+        ''', (profile['profile_id'],))
+        
+        chat_stats = cursor.fetchone()
+        
+        # 獲取最近的聊天主題
+        cursor.execute('''
+            SELECT message_content, created_at
+            FROM chat_messages 
+            WHERE profile_id = ? AND message_type = 'ai'
+            ORDER BY created_at DESC
+            LIMIT 5
+        ''', (profile['profile_id'],))
+        
+        recent_topics = cursor.fetchall()
+        
+        # 獲取使用統計
+        cursor.execute('''
+            SELECT action_type, COUNT(*) as count
+            FROM usage_stats 
+            WHERE profile_id = ?
+            GROUP BY action_type
+        ''', (profile['profile_id'],))
+        
+        usage_stats = cursor.fetchall()
+        
+        conn.close()
+        
+        # 分析用戶進度
+        analysis = analyze_student_progress(
+            chat_stats, 
+            recent_topics, 
+            usage_stats,
+            profile['created_at']
+        )
+        
+        return jsonify({
+            'ok': True,
+            'data': {
+                'profile': profile,
+                'analysis': {
+                    'total_messages': chat_stats[0] if chat_stats else 0,
+                    'active_days': chat_stats[1] if chat_stats else 0,
+                    'last_activity': chat_stats[2].strftime('%Y-%m-%d %H:%M') if chat_stats and chat_stats[2] else '未知',
+                    'recent_topics': [topic[0][:100] + '...' if len(topic[0]) > 100 else topic[0] for topic in recent_topics],
+                    'usage_stats': [{'action': stat[0], 'count': stat[1]} for stat in usage_stats],
+                    'progress': analysis.get('progress_summary', '分析中...'),
+                    'main_topics': analysis.get('main_topics', '分析中...'),
+                    'recommendations': analysis.get('recommendations', '分析中...')
+                }
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Admin search user error: {e}")
+        return jsonify({'ok': False, 'error': 'Internal server error'}), 500
+
+def analyze_student_progress(chat_stats, recent_topics, usage_stats, created_at):
+    """分析學生諮詢進度"""
+    try:
+        total_messages = chat_stats[0] if chat_stats else 0
+        active_days = chat_stats[1] if chat_stats else 0
+        last_activity = chat_stats[2] if chat_stats else None
+        
+        # 計算註冊天數
+        from datetime import datetime
+        if created_at:
+            if isinstance(created_at, str):
+                created_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            else:
+                created_date = created_at
+            days_since_registration = (datetime.now() - created_date).days
+        else:
+            days_since_registration = 0
+        
+        # 分析進度
+        progress_summary = ""
+        if total_messages == 0:
+            progress_summary = "尚未開始諮詢"
+        elif total_messages < 5:
+            progress_summary = "諮詢初期階段"
+        elif total_messages < 20:
+            progress_summary = "諮詢進行中"
+        else:
+            progress_summary = "深度諮詢階段"
+        
+        # 分析主要話題
+        main_topics = []
+        if recent_topics:
+            # 簡單的關鍵字分析
+            topic_keywords = {
+                '學校申請': ['學校', '申請', '錄取', '大學', '學院'],
+                '費用相關': ['費用', '學費', '生活費', '預算', '獎學金'],
+                '簽證問題': ['簽證', 'visa', '移民', '身份'],
+                '住宿安排': ['住宿', '宿舍', '租房', 'homestay'],
+                '語言考試': ['雅思', '托福', '語言', '考試', 'IELTS', 'TOEFL']
+            }
+            
+            for topic in recent_topics[:3]:  # 只看前3個話題
+                content = topic[0].lower()
+                for category, keywords in topic_keywords.items():
+                    if any(keyword in content for keyword in keywords):
+                        if category not in main_topics:
+                            main_topics.append(category)
+        
+        main_topics_text = ', '.join(main_topics) if main_topics else '一般諮詢'
+        
+        # 生成建議
+        recommendations = []
+        if total_messages < 5:
+            recommendations.append("建議增加諮詢頻率，深入了解留學需求")
+        if active_days < 3:
+            recommendations.append("建議保持定期諮詢，建立持續的留學規劃")
+        if not main_topics:
+            recommendations.append("建議明確留學目標，聚焦具體問題")
+        
+        recommendations_text = '; '.join(recommendations) if recommendations else '繼續保持目前的諮詢進度'
+        
+        return {
+            'progress_summary': progress_summary,
+            'main_topics': main_topics_text,
+            'recommendations': recommendations_text,
+            'days_since_registration': days_since_registration
+        }
+        
+    except Exception as e:
+        logger.error(f"Analyze student progress error: {e}")
+        return {
+            'progress_summary': '分析中...',
+            'main_topics': '分析中...',
+            'recommendations': '分析中...'
+        }
+
 if __name__ == '__main__':
     try:
         # 初始化超級管理員
