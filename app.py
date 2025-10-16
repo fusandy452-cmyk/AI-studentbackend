@@ -1262,9 +1262,14 @@ def root():
     })
 
 if __name__ == '__main__':
-    # 初始化超級管理員
-    init_super_admin()
-    
-    # 啟動應用
-    port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    try:
+        # 初始化超級管理員
+        init_super_admin()
+        
+        # 啟動應用
+        port = int(os.getenv('PORT', 5000))
+        logger.info(f"Starting Flask app on port {port}")
+        app.run(host='0.0.0.0', port=port, debug=False)
+    except Exception as e:
+        logger.error(f"Failed to start Flask app: {e}")
+        raise
