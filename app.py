@@ -307,12 +307,13 @@ def health_check():
                 users_count = db.get_users_count()
                 profiles_count = db.get_profiles_count()
                 messages_count = db.get_messages_count()
+                today_active = db.get_today_active_users()
             else:
                 db_status = "database_not_initialized"
-                users_count = profiles_count = messages_count = 0
+                users_count = profiles_count = messages_count = today_active = 0
         except Exception as e:
             db_status = f"error: {str(e)}"
-            users_count = profiles_count = messages_count = 0
+            users_count = profiles_count = messages_count = today_active = 0
         
         return jsonify({
             'status': 'healthy',
@@ -323,7 +324,8 @@ def health_check():
                 'status': db_status,
                 'users_count': users_count,
                 'profiles_count': profiles_count,
-                'messages_count': messages_count
+                'messages_count': messages_count,
+                'today_active_users': today_active
             }
         })
     except Exception as e:

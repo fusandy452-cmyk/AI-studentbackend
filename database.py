@@ -817,6 +817,31 @@ class DatabaseManager:
         count = cursor.fetchone()[0]
         conn.close()
         return count
+    
+    def get_today_active_users(self):
+        """獲取今日活躍用戶數量"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # 計算今日活躍用戶（今日有登入或聊天活動的用戶）
+            cursor.execute('''
+                SELECT COUNT(DISTINCT u.user_id) FROM users u
+                WHERE (
+                    DATE(u.updated_at) = DATE('now') OR
+                    u.user_id IN (
+                        SELECT DISTINCT cm.user_id FROM chat_messages cm
+                        WHERE DATE(cm.created_at) = DATE('now')
+                    )
+                )
+            ''')
+            count = cursor.fetchone()[0]
+            return count
+        except Exception as e:
+            print(f'Error getting today active users: {e}')
+            return 0
+        finally:
+            conn.close()
 
     def export_user_data(self, user_id=None):
         """匯出用戶資料"""
