@@ -32,8 +32,8 @@ GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
 SESSION_SECRET = os.getenv('SESSION_SECRET', 'dev-secret')
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
 GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
-LINE_CHANNEL_ID = os.getenv('LINE_CHANNEL_ID')
-LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
+LINE_CHANNEL_ID = os.getenv('LINE_CHANNEL_ID') or os.getenv('LINE_CLIENT_ID')
+LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET') or os.getenv('LINE_CLIENT_SECRET')
 
 # 載入知識庫
 def load_knowledge_base():
@@ -464,12 +464,12 @@ def line_login():
     """獲取 LINE 登入 URL"""
     try:
         # LINE Login 配置
-        line_client_id = os.getenv('LINE_CLIENT_ID')
+        line_client_id = LINE_CHANNEL_ID
         line_redirect_uri = f"{API_BASE_URL}/auth/line/callback"
         line_state = 'line_login_' + str(int(time.time()))
         
         if not line_client_id:
-            return jsonify({'ok': False, 'error': 'LINE_CLIENT_ID not configured'}), 500
+            return jsonify({'ok': False, 'error': 'LINE_CHANNEL_ID not configured'}), 500
         
         # 構建 LINE Login URL
         line_auth_url = (
@@ -508,8 +508,8 @@ def line_callback():
             return redirect(f'{FRONTEND_URL}/?error=line_no_code')
         
         # 交換 access token
-        line_client_id = os.getenv('LINE_CLIENT_ID')
-        line_client_secret = os.getenv('LINE_CLIENT_SECRET')
+        line_client_id = LINE_CHANNEL_ID
+        line_client_secret = LINE_CHANNEL_SECRET
         line_redirect_uri = f"{API_BASE_URL}/auth/line/callback"
         
         if not line_client_id or not line_client_secret:
