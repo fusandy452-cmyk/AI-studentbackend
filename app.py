@@ -1012,8 +1012,54 @@ def chat():
         logger.info(f"Chat request - profile_id: {profile_id}, user_role: {user_role}, message length: {len(message)}")
         
         # 獲取用戶資料
-        user_profile = db.get_user_profile(profile_id) if profile_id else {}
-        logger.info(f"User profile retrieved: {bool(user_profile)}")
+        user_profile = {}
+        if profile_id:
+            user_profile = db.get_user_profile(profile_id)
+            logger.info(f"User profile retrieved by profile_id: {bool(user_profile)}")
+        else:
+            # 如果沒有 profile_id，嘗試從用戶的所有 profile 中獲取最新的
+            user_id = request.user.get('user_id')
+            if user_id:
+                conn = db.get_connection()
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT profile_id, user_role, student_name, parent_name, student_email, 
+                           parent_email, relationship, child_name, child_email, citizenship, 
+                           gpa, degree, countries, budget, target_intake, created_at, updated_at
+                    FROM user_profiles 
+                    WHERE user_id = ? 
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ''', (user_id,))
+                
+                profile_data = cursor.fetchone()
+                conn.close()
+                
+                if profile_data:
+                    user_profile = {
+                        'profile_id': profile_data[0],
+                        'user_role': profile_data[1],
+                        'student_name': profile_data[2],
+                        'parent_name': profile_data[3],
+                        'student_email': profile_data[4],
+                        'parent_email': profile_data[5],
+                        'relationship': profile_data[6],
+                        'child_name': profile_data[7],
+                        'child_email': profile_data[8],
+                        'citizenship': profile_data[9],
+                        'gpa': profile_data[10],
+                        'degree': profile_data[11],
+                        'countries': json.loads(profile_data[12]) if profile_data[12] else [],
+                        'budget': profile_data[13],
+                        'target_intake': profile_data[14],
+                        'created_at': profile_data[15],
+                        'updated_at': profile_data[16]
+                    }
+                    logger.info(f"User profile retrieved by user_id: {bool(user_profile)}")
+                else:
+                    logger.warning(f"No profile found for user_id: {user_id}")
+        
+        logger.info(f"Final user profile: {bool(user_profile)}")
         
         # 構建 Gemini 提示
         # 載入知識庫內容
