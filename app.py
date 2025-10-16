@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, request, jsonify, redirect
+from flask import Flask, request, jsonify, redirect, send_file
 from flask_cors import CORS
 import os
 import jwt
@@ -97,6 +97,29 @@ def gemini_generate_text(prompt):
 # 初始化資料庫
 try:
     db = DatabaseManager()
+    
+    # 確保 user_settings 表格存在（遷移機制）
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT UNIQUE NOT NULL,
+                email_notifications BOOLEAN DEFAULT 0,
+                push_notifications BOOLEAN DEFAULT 1,
+                notification_frequency TEXT DEFAULT 'daily',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id)
+            )
+        ''')
+        conn.commit()
+        conn.close()
+        logger.info("User settings table ensured")
+    except Exception as e:
+        logger.error(f"User settings table creation failed: {e}")
+    
     logger.info("Database initialized successfully")
 except Exception as e:
     logger.error(f"Database initialization failed: {e}")
@@ -1050,14 +1073,22 @@ MANDATORY FORMATTING:
 重要回覆原則：
 1. 回覆要簡潔有重點 - 直接回答用戶的具體問題
 2. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
-3. 每個段落之間必須有空行分隔
+3. **強制要求**：每個段落之間必須有空行分隔，段落必須換行
 4. 使用項目符號 (•) 列出要點，每個要點單獨一行
 5. 使用 **粗體** 標示重要段落
 6. 提出 1-2 個後續問題延續對話
 7. 每次回覆最多 3-4 個重點
-8. 強制要求：每個主題段落後必須換行，不要連在一起
+8. **格式要求**：絕對不要讓段落連在一起，每個主題段落後必須換行
 9. 總是參考知識庫提供具體資訊
-10. 確保回覆格式正確，段落分明
+10. **回覆格式範例**：
+    - 段落1內容
+    [空行]
+    段落2內容
+    [空行]
+    • 要點1
+    • 要點2
+    [空行]
+    後續問題
 
 請用中文回應，提供有針對性的建議。""".format(
                 user_role,
@@ -1260,6 +1291,19 @@ def root():
             'LINE_CHANNEL_ID': bool(LINE_CHANNEL_ID)
         }
     })
+
+@app.route('/admin.html')
+def admin():
+    """後台管理系統"""
+    try:
+        admin_path = os.path.join(os.path.dirname(__file__), 'admin.html')
+        if os.path.exists(admin_path):
+            return send_file(admin_path)
+        else:
+            return jsonify({'error': 'Admin page not found'}), 404
+    except Exception as e:
+        logger.error(f"Error serving admin page: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
     try:
