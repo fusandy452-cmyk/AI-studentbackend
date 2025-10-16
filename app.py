@@ -35,6 +35,10 @@ GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
 LINE_CHANNEL_ID = os.getenv('LINE_CHANNEL_ID') or os.getenv('LINE_CLIENT_ID')
 LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET') or os.getenv('LINE_CLIENT_SECRET')
 
+# URL 配置
+FRONTEND_URL = 'https://aistudent.zeabur.app'
+API_BASE_URL = 'https://aistudentbackend.zeabur.app'
+
 # 載入知識庫
 def load_knowledge_base():
     """載入留學顧問知識庫"""
@@ -466,9 +470,16 @@ def line_login():
         # LINE Login 配置
         line_client_id = LINE_CHANNEL_ID
         line_redirect_uri = f"{API_BASE_URL}/auth/line/callback"
-        line_state = 'line_login_' + str(int(time.time()))
+        
+        # 生成隨機 state
+        import secrets
+        line_state = 'line_login_' + secrets.token_urlsafe(16)
+        
+        logger.info(f'LINE_CHANNEL_ID: {line_client_id}')
+        logger.info(f'Redirect URI: {line_redirect_uri}')
         
         if not line_client_id:
+            logger.error('LINE_CHANNEL_ID not configured')
             return jsonify({'ok': False, 'error': 'LINE_CHANNEL_ID not configured'}), 500
         
         # 構建 LINE Login URL
@@ -476,10 +487,12 @@ def line_login():
             f"https://access.line.me/oauth2/v2.1/authorize?"
             f"response_type=code&"
             f"client_id={line_client_id}&"
-            f"redirect_uri={line_redirect_uri}&"
+            f"redirect_uri={urllib.parse.quote(line_redirect_uri)}&"
             f"state={line_state}&"
             f"scope=profile%20openid%20email"
         )
+        
+        logger.info(f'Generated LINE login URL: {line_auth_url}')
         
         return jsonify({
             'ok': True,
@@ -489,7 +502,7 @@ def line_login():
         
     except Exception as e:
         logger.error(f'LINE login URL generation error: {e}')
-        return jsonify({'ok': False, 'error': 'Failed to generate LINE login URL'}), 500
+        return jsonify({'ok': False, 'error': f'Failed to generate LINE login URL: {str(e)}'}), 500
 
 @app.route('/auth/line/callback', methods=['GET'])
 def line_callback():
@@ -1596,7 +1609,15 @@ def debug_database():
                         'message_content': msg[3][:100] + '...' if len(msg[3]) > 100 else msg[3],
                         'created_at': msg[4]
                     } for msg in messages
-                ]
+                ],
+                'env_vars': {
+                    'LINE_CHANNEL_ID': bool(LINE_CHANNEL_ID),
+                    'LINE_CHANNEL_SECRET': bool(LINE_CHANNEL_SECRET),
+                    'GOOGLE_CLIENT_ID': bool(GOOGLE_CLIENT_ID),
+                    'GOOGLE_CLIENT_SECRET': bool(GOOGLE_CLIENT_SECRET),
+                    'GEMINI_API_KEY': bool(GEMINI_API_KEY),
+                    'SESSION_SECRET': bool(SESSION_SECRET)
+                }
             }
         })
         
