@@ -296,6 +296,24 @@
                 </div>
             </div>
         </div>
+
+        <!-- 用戶詳情模態框 -->
+        <div id="user-detail-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden" onclick="closeUserDetailModal(event)">
+            <div class="bg-white rounded-xl shadow-2xl max-w-6xl w-full mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold text-gray-900">👤 用戶詳情</h2>
+                        <button onclick="closeUserDetailModal()" class="text-gray-400 hover:text-gray-600 text-2xl">
+                            ×
+                        </button>
+                    </div>
+                    
+                    <div id="user-detail-content">
+                        <!-- 用戶詳細資料將在這裡動態載入 -->
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -460,7 +478,7 @@
                                     ${profile.student_name || profile.parent_name || '未知'}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                    ${profile.countries ? JSON.parse(profile.countries).join(', ') : '未設定'}
+                                    ${profile.countries ? (typeof profile.countries === 'string' ? JSON.parse(profile.countries).join(', ') : profile.countries.join(', ')) : '未設定'}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                     ${profile.budget || '未設定'}
@@ -650,8 +668,209 @@
         }
 
         // 查看用戶詳情
-        function viewUserDetails(userId) {
-            alert('用戶詳情功能開發中，用戶ID: ' + userId);
+        // 查看用戶詳情
+        async function viewUserDetails(userId) {
+            try {
+                // 顯示載入狀態
+                document.getElementById('user-detail-content').innerHTML = 
+                    '<div class="text-center py-8"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div><p class="mt-2">載入中...</p></div>';
+                
+                // 顯示模態框
+                document.getElementById('user-detail-modal').classList.remove('hidden');
+                
+                // 獲取用戶詳細資料
+                const response = await fetch(API_BASE + '/api/v1/debug/database');
+                const data = await response.json();
+                
+                if (data.ok) {
+                    // 查找用戶資料
+                    const user = data.data.users.find(u => u.user_id === userId);
+                    const profiles = data.data.profiles.filter(p => p.user_id === userId);
+                    
+                    displayUserDetails(user, profiles);
+                } else {
+                    document.getElementById('user-detail-content').innerHTML = 
+                        '<div class="text-center py-8 text-red-500">載入失敗</div>';
+                }
+            } catch (error) {
+                console.error('載入用戶詳情失敗:', error);
+                document.getElementById('user-detail-content').innerHTML = 
+                    '<div class="text-center py-8 text-red-500">載入失敗，請檢查網路連接</div>';
+            }
+        }
+        
+        // 顯示用戶詳細資料
+        function displayUserDetails(user, profiles) {
+            if (!user) {
+                document.getElementById('user-detail-content').innerHTML = 
+                    '<div class="text-center py-8 text-red-500">找不到用戶資料</div>';
+                return;
+            }
+            
+            const content = `
+                <div class="space-y-6">
+                    <!-- 用戶基本資訊 -->
+                    <div class="bg-blue-50 p-4 rounded-lg">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                            <span class="bg-blue-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-3">👤</span>
+                            用戶基本資訊
+                        </h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">用戶 ID</label>
+                                <div class="p-3 bg-white rounded border font-mono text-sm">${user.user_id}</div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">姓名</label>
+                                <div class="p-3 bg-white rounded border">${user.name || '未設定'}</div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">電子郵件</label>
+                                <div class="p-3 bg-white rounded border">${user.email || '未設定'}</div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">登入方式</label>
+                                <div class="p-3 bg-white rounded border">
+                                    <span class="px-2 py-1 rounded-full text-xs ${user.provider === 'google' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}">
+                                        ${user.provider === 'google' ? 'Google' : user.provider || '未知'}
+                                    </span>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">註冊時間</label>
+                                <div class="p-3 bg-white rounded border">${user.created_at ? new Date(user.created_at).toLocaleString('zh-TW') : '未知'}</div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">最後更新</label>
+                                <div class="p-3 bg-white rounded border">${user.updated_at ? new Date(user.updated_at).toLocaleString('zh-TW') : '未知'}</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 留學需求資料 -->
+                    ${profiles.length > 0 ? `
+                    <div class="bg-green-50 p-4 rounded-lg">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                            <span class="bg-green-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-3">📋</span>
+                            留學需求資料 (${profiles.length} 筆)
+                        </h3>
+                        ${profiles.map((profile, index) => {
+                            const countries = profile.countries ? JSON.parse(profile.countries) : [];
+                            return `
+                            <div class="mb-6 p-4 bg-white rounded-lg border">
+                                <h4 class="font-semibold text-gray-800 mb-3">Profile ${index + 1} (ID: ${profile.profile_id})</h4>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">角色</label>
+                                        <div class="p-2 bg-gray-50 rounded border">
+                                            <span class="px-2 py-1 rounded-full text-xs ${profile.user_role === 'student' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800'}">
+                                                ${profile.user_role === 'student' ? '學生' : profile.user_role === 'parent' ? '家長' : profile.user_role}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">學生姓名</label>
+                                        <div class="p-2 bg-gray-50 rounded border">${profile.student_name || '未填寫'}</div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">學生電子郵件</label>
+                                        <div class="p-2 bg-gray-50 rounded border">${profile.student_email || '未填寫'}</div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">國籍</label>
+                                        <div class="p-2 bg-gray-50 rounded border">${profile.citizenship || '未填寫'}</div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">GPA</label>
+                                        <div class="p-2 bg-gray-50 rounded border">${profile.gpa || '未填寫'}</div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">目標學位</label>
+                                        <div class="p-2 bg-gray-50 rounded border">${profile.degree || '未填寫'}</div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">目標國家</label>
+                                        <div class="p-2 bg-gray-50 rounded border">
+                                            ${countries.length > 0 ? countries.map(country => `
+                                                <span class="inline-block px-2 py-1 rounded-full text-xs bg-green-100 text-green-800 mr-1 mb-1">
+                                                    ${country}
+                                                </span>
+                                            `).join('') : '<span class="text-gray-500">未選擇</span>'}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">預算</label>
+                                        <div class="p-2 bg-gray-50 rounded border">${profile.budget || '未填寫'}</div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">目標入學時間</label>
+                                        <div class="p-2 bg-gray-50 rounded border">${profile.target_intake || '未填寫'}</div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">建立時間</label>
+                                        <div class="p-2 bg-gray-50 rounded border">${profile.created_at ? new Date(profile.created_at).toLocaleString('zh-TW') : '未知'}</div>
+                                    </div>
+                                </div>
+                                
+                                ${profile.user_role === 'parent' ? `
+                                <div class="mt-4 p-3 bg-orange-50 rounded border">
+                                    <h5 class="font-medium text-gray-800 mb-2">家長資訊</h5>
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">家長姓名</label>
+                                            <div class="p-2 bg-white rounded border">${profile.parent_name || '未填寫'}</div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">家長電子郵件</label>
+                                            <div class="p-2 bg-white rounded border">${profile.parent_email || '未填寫'}</div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">與學生關係</label>
+                                            <div class="p-2 bg-white rounded border">${profile.relationship || '未填寫'}</div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">學生姓名</label>
+                                            <div class="p-2 bg-white rounded border">${profile.child_name || '未填寫'}</div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">學生電子郵件</label>
+                                            <div class="p-2 bg-white rounded border">${profile.child_email || '未填寫'}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                ` : ''}
+                            </div>
+                            `;
+                        }).join('')}
+                    </div>
+                    ` : `
+                    <div class="bg-yellow-50 p-4 rounded-lg">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                            <span class="bg-yellow-500 text-white rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold mr-3">⚠️</span>
+                            留學需求資料
+                        </h3>
+                        <div class="text-center py-4">
+                            <p class="text-gray-600">此用戶尚未填寫留學需求資料</p>
+                        </div>
+                    </div>
+                    `}
+                </div>
+                
+                <!-- 關閉按鈕 -->
+                <div class="flex justify-end mt-6">
+                    <button onclick="closeUserDetailModal()" class="px-6 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors">
+                        關閉
+                    </button>
+                </div>
+            `;
+            
+            document.getElementById('user-detail-content').innerHTML = content;
+        }
+        
+        // 關閉用戶詳情模態框
+        function closeUserDetailModal(event) {
+            if (event && event.target !== event.currentTarget) return;
+            document.getElementById('user-detail-modal').classList.add('hidden');
         }
 
         // 查看 Profile 詳情

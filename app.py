@@ -1509,6 +1509,11 @@ def debug_database():
         cursor.execute('SELECT * FROM user_profiles')
         profiles = cursor.fetchall()
         
+        # 調試：檢查 profile 數據結構
+        if profiles:
+            logger.info(f"Profile data structure: {profiles[0]}")
+            logger.info(f"Profile data length: {len(profiles[0])}")
+        
         # 查詢所有聊天記錄
         cursor.execute('SELECT * FROM chat_messages LIMIT 10')
         messages = cursor.fetchall()
@@ -1533,12 +1538,25 @@ def debug_database():
                 ],
                 'profiles': [
                     {
-                        'profile_id': profile[0],
-                        'user_id': profile[1],
-                        'user_role': profile[2],
-                        'student_name': profile[3],
-                        'parent_name': profile[4],
-                        'created_at': profile[15]
+                        'id': profile[0],
+                        'profile_id': profile[1],
+                        'user_id': profile[2],
+                        'user_role': profile[3],
+                        'student_name': profile[4],
+                        'student_email': profile[5],
+                        'parent_name': profile[6],
+                        'parent_email': profile[7],
+                        'relationship': profile[8],
+                        'child_name': profile[9],
+                        'child_email': profile[10],
+                        'citizenship': profile[11],
+                        'gpa': profile[12],
+                        'degree': profile[13],
+                        'countries': profile[14],
+                        'budget': profile[15],
+                        'target_intake': profile[16],
+                        'created_at': profile[17],
+                        'updated_at': profile[18]
                     } for profile in profiles
                 ],
                 'recent_messages': [
