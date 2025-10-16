@@ -482,14 +482,17 @@ def line_login():
             logger.error('LINE_CHANNEL_ID not configured')
             return jsonify({'ok': False, 'error': 'LINE_CHANNEL_ID not configured'}), 500
         
-        # 構建 LINE Login URL
+        # 構建 LINE Login URL - 針對 LINE 內建瀏覽器優化
         line_auth_url = (
             f"https://access.line.me/oauth2/v2.1/authorize?"
             f"response_type=code&"
             f"client_id={line_client_id}&"
             f"redirect_uri={urllib.parse.quote(line_redirect_uri)}&"
             f"state={line_state}&"
-            f"scope=profile%20openid%20email"
+            f"scope=profile%20openid%20email&"
+            f"bot_prompt=normal&"
+            f"prompt=consent&"
+            f"nonce=line_login_{int(time.time())}"
         )
         
         logger.info(f'Generated LINE login URL: {line_auth_url}')
