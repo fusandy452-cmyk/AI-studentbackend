@@ -102,6 +102,35 @@ except Exception as e:
     logger.error(f"Database initialization failed: {e}")
     db = None
 
+# JWT 驗證裝飾器
+def verify_jwt_token(f):
+    """JWT 驗證裝飾器"""
+    def wrapper(*args, **kwargs):
+        try:
+            auth_header = request.headers.get('Authorization', '')
+            if not auth_header.startswith('Bearer '):
+                return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+            
+            token = auth_header.split(' ')[1]
+            
+            # 處理測試用的假 token
+            if token == 'fake-jwt-token-for-testing':
+                request.user = {
+                    'user_id': 'test-user',
+                    'email': 'test@example.com',
+                    'name': 'Test User'
+                }
+                return f(*args, **kwargs)
+            
+            decoded = jwt.decode(token, SESSION_SECRET, algorithms=['HS256'])
+            request.user = decoded
+            return f(*args, **kwargs)
+            
+        except Exception as e:
+            return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+    wrapper.__name__ = f.__name__
+    return wrapper
+
 # 速率限制
 rate_limit_storage = defaultdict(list)
 RATE_LIMIT_WINDOW = 60  # 60秒
@@ -898,34 +927,6 @@ def auth_config():
             'channel_id': LINE_CHANNEL_ID if LINE_CHANNEL_ID else None
         }
     })
-
-def verify_jwt_token(f):
-    """JWT 驗證裝飾器"""
-    def wrapper(*args, **kwargs):
-        try:
-            auth_header = request.headers.get('Authorization', '')
-            if not auth_header.startswith('Bearer '):
-                return jsonify({'ok': False, 'error': 'unauthorized'}), 401
-            
-            token = auth_header.split(' ')[1]
-            
-            # 處理測試用的假 token
-            if token == 'fake-jwt-token-for-testing':
-                request.user = {
-                    'user_id': 'test-user',
-                    'email': 'test@example.com',
-                    'name': 'Test User'
-                }
-                return f(*args, **kwargs)
-            
-            decoded = jwt.decode(token, SESSION_SECRET, algorithms=['HS256'])
-            request.user = decoded
-            return f(*args, **kwargs)
-            
-        except Exception as e:
-            return jsonify({'ok': False, 'error': 'unauthorized'}), 401
-    wrapper.__name__ = f.__name__
-    return wrapper
 
 @app.route('/api/v1/auth/status', methods=['GET'])
 @verify_jwt_token
