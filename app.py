@@ -1375,6 +1375,11 @@ def debug_database():
         cursor.execute('SELECT * FROM users')
         users = cursor.fetchall()
         
+        # 調試：檢查用戶數據結構
+        if users:
+            logger.info(f"User data structure: {users[0]}")
+            logger.info(f"User data length: {len(users[0])}")
+        
         # 查詢所有 profile
         cursor.execute('SELECT * FROM user_profiles')
         profiles = cursor.fetchall()
@@ -1390,13 +1395,14 @@ def debug_database():
             'data': {
                 'users': [
                     {
-                        'user_id': user[0],
-                        'email': user[1],
-                        'name': user[2],
-                        'provider': user[3],
-                        'provider_id': user[4],
-                        'avatar': user[5],
-                        'created_at': user[6]
+                        'id': user[0],
+                        'user_id': user[1], 
+                        'email': user[2],
+                        'name': user[3],
+                        'avatar': user[4],
+                        'provider': 'google',  # 默認為 google，因為目前只有 Google 登入
+                        'created_at': user[5],
+                        'updated_at': user[6] if len(user) > 6 else user[5]
                     } for user in users
                 ],
                 'profiles': [
