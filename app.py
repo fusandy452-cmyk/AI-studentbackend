@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, request, jsonify, redirect, send_file
+from flask import Flask, request, jsonify, redirect, send_file, Response, stream_with_context
 from flask_cors import CORS
 import os
 import jwt
@@ -73,6 +73,48 @@ def load_knowledge_base():
         logger.error(f"Error loading knowledge base: {e}")
         return "Knowledge base not available"
 
+def rag_search(query, knowledge_base, top_k=3):
+    """RAG 檢索：從知識庫中檢索相關片段"""
+    try:
+        if not knowledge_base or not query:
+            return ""
+        
+        # 簡單的關鍵字匹配檢索
+        query_words = query.lower().split()
+        knowledge_sections = knowledge_base.split('\n\n')
+        
+        scored_sections = []
+        for section in knowledge_sections:
+            if len(section.strip()) < 50:  # 跳過太短的段落
+                continue
+            
+            section_lower = section.lower()
+            score = 0
+            
+            # 計算關鍵字匹配分數
+            for word in query_words:
+                if word in section_lower:
+                    score += section_lower.count(word)
+            
+            if score > 0:
+                scored_sections.append((score, section))
+        
+        # 按分數排序，取前 top_k 個
+        scored_sections.sort(key=lambda x: x[0], reverse=True)
+        top_sections = scored_sections[:top_k]
+        
+        # 組合檢索結果
+        rag_content = ""
+        for score, section in top_sections:
+            rag_content += section + "\n\n"
+        
+        logger.info(f"RAG search found {len(top_sections)} relevant sections for query: {query}")
+        return rag_content.strip()
+        
+    except Exception as e:
+        logger.error(f"RAG search error: {e}")
+        return ""
+
 # 初始化 Gemini AI
 def use_gemini():
     return bool(GEMINI_API_KEY)
@@ -117,6 +159,68 @@ def gemini_generate_text(prompt):
     except Exception as e:
         logger.error(f"Gemini API error: {e}")
         return ""
+
+def gemini_generate_stream(prompt):
+    """使用 Gemini AI 生成串流文本"""
+    try:
+        if not use_gemini():
+            logger.warning("Gemini API key not configured")
+            yield "data: 抱歉，AI 服務暫時無法使用。\n\n"
+            return
+        
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        
+        logger.info(f"Generating stream with Gemini AI - Model: {GEMINI_MODEL}")
+        logger.info(f"Prompt length: {len(prompt)} characters")
+        
+        # 生成內容
+        res = model.generate_content(prompt)
+        
+        # 嘗試多種方式獲取文本
+        text = None
+        try:
+            if hasattr(res, 'text') and res.text:
+                text = res.text
+            elif hasattr(res, 'candidates') and res.candidates:
+                candidate = res.candidates[0]
+                if hasattr(candidate, 'content') and candidate.content:
+                    if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                        text_parts = []
+                        for part in candidate.content.parts:
+                            if hasattr(part, 'text') and part.text:
+                                text_parts.append(part.text)
+                        if text_parts:
+                            text = ''.join(text_parts)
+        except Exception as text_error:
+            logger.error(f"Error accessing Gemini response text: {text_error}")
+            yield "data: 抱歉，AI 回應格式有誤，請稍後再試。\n\n"
+            return
+        
+        if not text:
+            logger.error("Failed to extract text from Gemini response")
+            yield "data: 抱歉，AI 回應格式有誤，請稍後再試。\n\n"
+            return
+        
+        logger.info(f"Generated stream text length: {len(text)} characters")
+        
+        # 模擬串流：將文本切成 20-40 字的片段
+        words = text.split()
+        chunk_size = 25  # 平均 25 個字
+        
+        for i in range(0, len(words), chunk_size):
+            chunk_words = words[i:i + chunk_size]
+            chunk_text = " ".join(chunk_words)
+            
+            if i + chunk_size < len(words):
+                chunk_text += " "  # 如果不是最後一塊，加個空格
+            
+            yield f"data: {chunk_text}\n\n"
+            time.sleep(0.05)  # 50ms 延遲，模擬打字效果
+        
+    except Exception as e:
+        logger.error(f"Gemini AI stream error: {e}")
+        yield "data: 抱歉，AI 服務暫時無法使用，請稍後再試。\n\n"
 
 # 初始化資料庫
 try:
@@ -215,11 +319,15 @@ def verify_jwt_token(f):
     """JWT 驗證裝飾器"""
     def wrapper(*args, **kwargs):
         try:
-            auth_header = request.headers.get('Authorization', '')
-            if not auth_header.startswith('Bearer '):
-                return jsonify({'ok': False, 'error': 'unauthorized'}), 401
+            # 優先從 Cookie 獲取 token，其次從 Authorization header
+            token = request.cookies.get("jwt") or ""
+            if not token and "Authorization" in request.headers:
+                auth_header = request.headers.get('Authorization', '')
+                if auth_header.startswith('Bearer '):
+                    token = auth_header.split(' ')[1]
             
-            token = auth_header.split(' ')[1]
+            if not token:
+                return jsonify({'ok': False, 'error': 'unauthorized'}), 401
             
             # 處理測試用的假 token
             if token == 'fake-jwt-token-for-testing':
@@ -1397,6 +1505,218 @@ Format requirements:
             fallback_reply = '抱歉，我目前遇到技術問題。請稍後再試，或聯繫我們的支援團隊獲得協助。'
         
         return jsonify({'ok': True, 'reply': fallback_reply})
+
+# 串流聊天 API
+@app.route('/api/v1/chat/stream', methods=['GET'])
+@verify_jwt_token
+def chat_stream():
+    """SSE 串流聊天端點"""
+    try:
+        # 從 URL 參數獲取數據
+        message = request.args.get('message', '')
+        profile_id = request.args.get('profile_id')
+        language = request.args.get('language', 'zh')
+        user_role = request.args.get('user_role', 'student')
+        
+        if not message.strip():
+            def error_generator():
+                yield "data: 請輸入有效的訊息。\n\n"
+                yield "data: [DONE]\n\n"
+            return Response(stream_with_context(error_generator()), 
+                          mimetype='text/event-stream',
+                          headers={
+                              'Cache-Control': 'no-cache',
+                              'X-Accel-Buffering': 'no',
+                              'Content-Type': 'text/event-stream; charset=utf-8'
+                          })
+        
+        def generator():
+            try:
+                # 1. 驗證 JWT 和參數
+                user_id = request.user.get('user_id')
+                logger.info(f"Stream chat request - user_id: {user_id}, profile_id: {profile_id}, message: {message[:50]}...")
+                
+                # 2. 查詢最近 20 則對話
+                recent_messages = []
+                if profile_id:
+                    try:
+                        conn = db.get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute('''
+                            SELECT message_type, message_content, created_at
+                            FROM chat_messages 
+                            WHERE profile_id = ? 
+                            ORDER BY created_at DESC 
+                            LIMIT 20
+                        ''', (profile_id,))
+                        
+                        messages_data = cursor.fetchall()
+                        for msg in messages_data:
+                            recent_messages.append({
+                                'type': msg[0],
+                                'content': msg[1],
+                                'created_at': msg[2]
+                            })
+                        conn.close()
+                        
+                        # 反轉順序，讓最早的訊息在前面
+                        recent_messages.reverse()
+                        logger.info(f"Retrieved {len(recent_messages)} recent messages")
+                    except Exception as e:
+                        logger.error(f"Error retrieving chat history: {e}")
+                
+                # 3. 查詢最近一次摘要（暫時跳過，因為沒有 chat_summaries 表）
+                latest_summary = ""
+                
+                # 4. RAG 檢索
+                knowledge_base = load_knowledge_base()
+                rag_content = rag_search(message, knowledge_base, top_k=3)
+                logger.info(f"RAG retrieved {len(rag_content)} characters")
+                
+                # 5. 組建 System Prompt
+                # 獲取用戶資料
+                user_profile = {}
+                if profile_id:
+                    try:
+                        user_profile = db.get_user_profile(profile_id)
+                    except Exception as e:
+                        logger.error(f"Error getting user profile: {e}")
+                
+                # 構建精簡歷史
+                history_text = ""
+                for msg in recent_messages[-10:]:  # 只取最近 10 條
+                    role = "用戶" if msg['type'] == 'user' else "AI"
+                    history_text += f"{role}: {msg['content']}\n"
+                
+                # 系統提示詞
+                system_prompt = f"""你是一位專業的AI留學顧問。你為計劃國際教育的學生和家長提供個人化的專業指導。
+
+用戶角色：{user_role}
+用戶資料：{json.dumps(user_profile, indent=2, ensure_ascii=False) if user_profile else '無資料'}
+
+**重要：你必須根據上述用戶資料來回答問題，不要重複詢問用戶已經提供的資訊！**
+
+**用戶資料狀態檢查：**
+- 如果用戶資料顯示完整資訊（包含姓名、預算、目標等），表示用戶已經建立過留學需求
+- 此時絕對不要要求用戶重新填寫或建立資料
+- 直接基於現有資料提供專業建議和指導
+
+**用戶資料使用規則：**
+- 如果有學生姓名，請直接使用姓名稱呼用戶
+- 如果有家長姓名，請使用家長姓名稱呼
+- 根據用戶的預算、目標國家、學歷背景提供針對性建議
+- 絕對不要詢問用戶已經提供的資訊（如姓名、預算、國家偏好、學歷等）
+- **用戶已有完整資料時，絕對不要要求重新建立或填寫**
+- **直接使用現有資料提供建議，不要重複詢問已知資訊**
+
+**對話風格規則：**
+- **只在第一次對話時使用問候語**（如：Jacky您好！）
+- **後續對話不要重複問候**，直接回答問題
+- **保持對話連續性**，不要跳回開場白或重新介紹
+- **如果無法回答特定問題，誠實說明並提供替代建議**
+- **理解問題語境**：如果用戶問的是關於「您」的問題，要明確說明自己是AI，不能代替用戶回答
+- **避免無意義回應**：不要給出明顯不合理或無關的回答
+
+對話歷史：
+{history_text}
+
+最新摘要：{latest_summary}
+
+相關知識庫內容：
+{rag_content}
+
+重要回覆原則：
+1. **優先提供具體內容** - 必須直接回答用戶問題並提供實用的具體資訊
+2. **使用用戶資料** - 絕對不要詢問用戶已經提供的資訊（如預算、國家偏好、學歷等）
+3. **重點：多提供內容，少問問題** - 盡可能提供詳細的具體建議和資訊
+4. 使用 emoji 讓內容更生動 (🎓📚💰🏠✈️📋)
+5. **強制要求**：每個段落之間必須有空行分隔，段落必須換行
+6. 使用項目符號 (•) 列出要點，每個要點單獨一行
+7. 使用 **粗體** 標示重要段落
+8. **回答結構**：先回答問題 → 提供詳細資訊 → 只有在絕對必要時才問 1 個問題
+9. 每次回覆提供豐富的具體內容，包含學校名稱、具體建議、實際數據等
+10. **格式要求**：絕對不要讓段落連在一起，每個主題段落後必須換行
+11. **段落分隔**：每個主要觀點後必須空一行，確保視覺上段落分明
+12. 總是參考知識庫提供具體資訊和實際建議
+13. **回覆格式範例**：
+    **直接回答**
+    [空行]
+    詳細說明
+    [空行]
+    • 要點1
+    • 要點2
+    [空行]
+    一個相關問題
+
+請用中文回應，提供有針對性的建議。"""
+                
+                # 6. 呼叫串流生成
+                logger.info("Starting stream generation...")
+                full_response = ""
+                
+                for chunk in gemini_generate_stream(system_prompt):
+                    chunk_text = chunk.replace("data: ", "").replace("\n\n", "")
+                    if chunk_text and chunk_text != "[DONE]":
+                        full_response += chunk_text
+                    yield chunk
+                
+                # 7. 結束標記
+                yield "data: [DONE]\n\n"
+                
+                # 8. 保存對話記錄
+                if profile_id and full_response:
+                    try:
+                        # 保存用戶訊息
+                        db.save_chat_message({
+                            'profile_id': profile_id,
+                            'user_id': user_id,
+                            'message_type': 'user',
+                            'message_content': message,
+                            'language': language,
+                            'user_role': user_role
+                        })
+                        
+                        # 保存 AI 回應
+                        db.save_chat_message({
+                            'profile_id': profile_id,
+                            'user_id': user_id,
+                            'message_type': 'ai',
+                            'message_content': full_response.strip(),
+                            'language': language,
+                            'user_role': user_role
+                        })
+                        
+                        logger.info("Chat messages saved successfully")
+                    except Exception as e:
+                        logger.error(f"Error saving chat messages: {e}")
+                
+                # 9. 生成並保存摘要（暫時跳過，因為沒有 chat_summaries 表）
+                
+            except Exception as e:
+                logger.error(f'Stream generator error: {e}')
+                yield "data: 抱歉，發生技術錯誤，請稍後再試。\n\n"
+                yield "data: [DONE]\n\n"
+        
+        return Response(stream_with_context(generator()), 
+                       mimetype='text/event-stream',
+                       headers={
+                           'Cache-Control': 'no-cache',
+                           'X-Accel-Buffering': 'no',
+                           'Content-Type': 'text/event-stream; charset=utf-8'
+                       })
+        
+    except Exception as e:
+        logger.error(f'Stream chat error: {e}')
+        def error_generator():
+            yield "data: 抱歉，發生技術錯誤，請稍後再試。\n\n"
+            yield "data: [DONE]\n\n"
+        return Response(stream_with_context(error_generator()), 
+                       mimetype='text/event-stream',
+                       headers={
+                           'Cache-Control': 'no-cache',
+                           'X-Accel-Buffering': 'no',
+                           'Content-Type': 'text/event-stream; charset=utf-8'
+                       })
 
 # 管理員登入
 @app.route('/api/v1/admin/login', methods=['POST'])
