@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timedelta
 import google.generativeai as genai
 import requests  # 用於 Google OAuth 和 LINE OAuth 的 HTTP 請求
-from database import DatabaseManager
+from database_client import DatabaseClient
 import urllib.parse
 import time
 from collections import defaultdict
@@ -222,96 +222,19 @@ def gemini_generate_stream(prompt):
         logger.error(f"Gemini AI stream error: {e}")
         yield "data: 抱歉，AI 服務暫時無法使用，請稍後再試。\n\n"
 
-# 初始化資料庫
+# 初始化資料庫客戶端
 try:
-    # 使用 Zeabur 的持久化存儲目錄
-    import os
-    persistent_dir = '/data'
+    db = DatabaseClient()
     
-    # 確保持久化目錄存在
-    if not os.path.exists(persistent_dir):
-        try:
-            os.makedirs(persistent_dir, exist_ok=True)
-            logger.info(f"Created persistent directory: {persistent_dir}")
-        except Exception as e:
-            logger.warning(f"Failed to create persistent directory: {e}")
-    
-    # 優先使用持久化存儲
-    if os.path.exists(persistent_dir):
-        db_path = os.path.join(persistent_dir, 'ai_study_advisor.db')
-        logger.info(f"Using persistent storage: {db_path}")
-        
-        # 檢查是否已有資料庫文件
-        if os.path.exists(db_path):
-            logger.info(f"Existing database found: {db_path}")
-        else:
-            logger.info(f"Creating new database: {db_path}")
+    # 測試資料庫服務連接
+    health_result = db.health_check()
+    if health_result.get('ok') or health_result.get('status') == 'healthy':
+        logger.info("Database service connected successfully")
     else:
-        # 如果持久化目錄不存在，使用當前目錄
-        db_path = 'ai_study_advisor.db'
-        logger.warning(f"Persistent directory not found, using local path: {db_path}")
-    
-    db = DatabaseManager(db_path=db_path)
-    
-    # 創建初始備份
-    try:
-        db.create_backup()
-        logger.info("Initial database backup created")
-    except Exception as e:
-        logger.warning(f"Failed to create initial backup: {e}")
-    
-    # 確保 user_settings 表格存在（遷移機制）
-    try:
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_settings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id TEXT UNIQUE NOT NULL,
-                email_notifications BOOLEAN DEFAULT 0,
-                push_notifications BOOLEAN DEFAULT 1,
-                notification_frequency TEXT DEFAULT 'daily',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users (user_id)
-            )
-        ''')
-        conn.commit()
-        conn.close()
-        logger.info("User settings table ensured")
-    except Exception as e:
-        logger.error(f"User settings table creation failed: {e}")
-    
-    logger.info("Database initialized successfully")
-    
-    # 檢查並創建定期備份
-    try:
-        # 檢查資料庫是否有資料，如果沒有則嘗試從備份恢復
-        try:
-            test_conn = db.get_connection()
-            cursor = test_conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM users")
-            user_count = cursor.fetchone()[0]
-            test_conn.close()
-            
-            if user_count == 0:
-                logger.info("Database is empty, attempting to restore from backup")
-                if db.restore_from_backup():
-                    logger.info("Successfully restored database from backup")
-                else:
-                    logger.info("No backup found or restore failed, starting with empty database")
-        except Exception as e:
-            logger.warning(f"Database check failed: {e}")
-        
-        # 創建初始備份
-        db.create_backup()
-        logger.info("Created initial backup")
-        
-    except Exception as e:
-        logger.warning(f"Backup initialization failed: {e}")
+        logger.warning(f"Database service health check failed: {health_result}")
         
 except Exception as e:
-    logger.error(f"Database initialization failed: {e}")
+    logger.error(f"Database client initialization failed: {e}")
     db = None
 
 # 安全 Cookie 設置函數
@@ -432,16 +355,22 @@ def require_admin_auth(f):
 @app.route('/health', methods=['GET'])
 def health_check():
     try:
-        # 檢查資料庫連接
+        # 檢查資料庫服務連接
         db_status = "healthy"
         try:
             if db:
-                users_count = db.get_users_count()
-                profiles_count = db.get_profiles_count()
-                messages_count = db.get_messages_count()
-                today_active = db.get_today_active_users()
+                health_result = db.health_check()
+                if health_result.get('status') == 'healthy':
+                    db_status = "healthy"
+                    users_count = health_result.get('user_count', 0)
+                    profiles_count = health_result.get('profile_count', 0)
+                    messages_count = health_result.get('message_count', 0)
+                    today_active = 0  # 資料庫服務目前沒有提供這個統計
+                else:
+                    db_status = f"database_service_error: {health_result.get('error', 'Unknown error')}"
+                    users_count = profiles_count = messages_count = today_active = 0
             else:
-                db_status = "database_not_initialized"
+                db_status = "database_client_not_initialized"
                 users_count = profiles_count = messages_count = today_active = 0
         except Exception as e:
             db_status = f"error: {str(e)}"
@@ -521,15 +450,23 @@ def google_callback():
             'email': user_data.get('email', ''),
             'name': user_data.get('name', ''),
             'avatar': user_data.get('picture', ''),  # 使用 avatar 而不是 picture
+            'provider': 'google'
         }
         
-        # 檢查用戶是否已存在
-        existing_user = db.get_user_by_provider_id('google', user_data['id'])
-        if not existing_user:
-            db.save_user(user_info)
+        # 檢查用戶是否已存在並儲存/更新用戶資料
+        if db:
+            existing_user = db.get_user_by_provider_id('google', user_data['id'])
+            if not existing_user or not existing_user.get('ok'):
+                result = db.save_user(user_info)
+                if not result.get('ok'):
+                    logger.error(f"Failed to save user: {result.get('error')}")
+            else:
+                # 更新現有用戶資料
+                result = db.update_user(user_data['id'], user_info)
+                if not result.get('ok'):
+                    logger.error(f"Failed to update user: {result.get('error')}")
         else:
-            # 更新現有用戶資料
-            db.update_user(user_data['id'], user_info)
+            logger.error("Database client not available")
         
         # 生成 JWT token
         token_payload = {
@@ -716,17 +653,27 @@ def line_callback():
             'email': profile_data.get('email', ''),
             'name': profile_data.get('displayName', ''),
             'avatar': profile_data.get('pictureUrl', ''),
+            'provider': 'line'
         }
         
-        # 檢查用戶是否已存在
-        existing_user = db.get_user_by_provider_id('line', profile_data['userId'])
-        if not existing_user:
-            db.save_user(user_info)
-            logger.info(f'New LINE user created: {user_info["name"]} ({user_info["userId"]})')
+        # 檢查用戶是否已存在並儲存/更新用戶資料
+        if db:
+            existing_user = db.get_user_by_provider_id('line', profile_data['userId'])
+            if not existing_user or not existing_user.get('ok'):
+                result = db.save_user(user_info)
+                if result.get('ok'):
+                    logger.info(f'New LINE user created: {user_info["name"]} ({user_info["userId"]})')
+                else:
+                    logger.error(f"Failed to save LINE user: {result.get('error')}")
+            else:
+                # 更新現有用戶資料
+                result = db.update_user(profile_data['userId'], user_info)
+                if result.get('ok'):
+                    logger.info(f'Existing LINE user logged in: {user_info["name"]} ({user_info["userId"]})')
+                else:
+                    logger.error(f"Failed to update LINE user: {result.get('error')}")
         else:
-            # 更新現有用戶資料
-            db.update_user(profile_data['userId'], user_info)
-            logger.info(f'Existing LINE user logged in: {user_info["name"]} ({user_info["userId"]})')
+            logger.error("Database client not available")
         
         # 生成 JWT token
         token_payload = {
@@ -758,16 +705,23 @@ def sync_user_data():
         logger.info(f"User sync request from user_id: {user_id}")
         
         # 獲取用戶基本資料
-        user_data = db.get_user_by_id(user_id)
-        if not user_data:
+        if not db:
+            return jsonify({'ok': False, 'error': 'Database service not available'}), 500
+            
+        user_result = db.get_user_by_id(user_id)
+        if not user_result or not user_result.get('ok'):
             return jsonify({'ok': False, 'error': 'User not found'}), 404
         
+        user_data = user_result.get('data', {})
+        
         # 獲取用戶的最新 profile 資料
-        profiles = db.get_user_profiles(user_id)
+        profiles_result = db.get_user_profiles(user_id)
         latest_profile = None
-        if profiles:
-            # 取最新的 profile
-            latest_profile = max(profiles, key=lambda p: p.get('created_at', ''))
+        if profiles_result and profiles_result.get('ok'):
+            profiles = profiles_result.get('data', [])
+            if profiles:
+                # 取最新的 profile
+                latest_profile = max(profiles, key=lambda p: p.get('created_at', ''))
         
         # 構建同步資料
         sync_data = {
@@ -809,9 +763,14 @@ def get_user_profile_data(profile_id):
             return jsonify({'ok': False, 'error': 'Invalid token'}), 401
         
         # 獲取用戶設定資料
-        profile_data = db.get_user_profile(profile_id)
-        if not profile_data:
+        if not db:
+            return jsonify({'ok': False, 'error': 'Database service not available'}), 500
+            
+        profile_result = db.get_user_profile(profile_id)
+        if not profile_result or not profile_result.get('ok'):
             return jsonify({'ok': False, 'error': 'Profile not found'}), 404
+        
+        profile_data = profile_result.get('data', {})
         
         # 驗證 profile 是否屬於該用戶
         if profile_data.get('user_id') != user_id:
@@ -831,33 +790,29 @@ def check_user_profile():
         user_id = request.user['user_id']
         
         # 查找用戶的所有 profile
-        conn = db.get_connection()
-        cursor = conn.cursor()
+        if not db:
+            return jsonify({'ok': False, 'error': 'Database service not available'}), 500
+            
+        profiles_result = db.get_user_profiles(user_id)
+        if not profiles_result or not profiles_result.get('ok'):
+            return jsonify({'ok': False, 'error': 'Failed to get user profiles'}), 500
         
-        cursor.execute('''
-            SELECT profile_id, user_role, student_name, parent_name, created_at 
-            FROM user_profiles 
-            WHERE user_id = ? 
-            ORDER BY created_at DESC
-        ''', (user_id,))
-        
-        profiles = cursor.fetchall()
-        conn.close()
+        profiles = profiles_result.get('data', [])
         
         if profiles:
             # 返回最新的 profile 資料
-            latest_profile = profiles[0]
+            latest_profile = profiles[0]  # 已經按 created_at DESC 排序
             return jsonify({
                 'ok': True, 
                 'has_profile': True,
-                'profile_id': latest_profile[0],
-                'user_role': latest_profile[1],
+                'profile_id': latest_profile['profile_id'],
+                'user_role': latest_profile['user_role'],
                 'profile_data': {
-                    'profile_id': latest_profile[0],
-                    'user_role': latest_profile[1],
-                    'student_name': latest_profile[2],
-                    'parent_name': latest_profile[3],
-                    'created_at': latest_profile[4]
+                    'profile_id': latest_profile['profile_id'],
+                    'user_role': latest_profile['user_role'],
+                    'student_name': latest_profile.get('student_name'),
+                    'parent_name': latest_profile.get('parent_name'),
+                    'created_at': latest_profile['created_at']
                 }
             })
         else:
@@ -879,79 +834,23 @@ def update_user_profile(profile_id):
         data = request.get_json()
         
         # 驗證 profile 是否屬於該用戶
-        existing_profile = db.get_user_profile(profile_id)
-        if not existing_profile:
-            return jsonify({'ok': False, 'error': 'Profile not found'}), 404
+        if not db:
+            return jsonify({'ok': False, 'error': 'Database service not available'}), 500
             
+        existing_profile_result = db.get_user_profile(profile_id)
+        if not existing_profile_result or not existing_profile_result.get('ok'):
+            return jsonify({'ok': False, 'error': 'Profile not found'}), 404
+        
+        existing_profile = existing_profile_result.get('data', {})
         if existing_profile.get('user_id') != user_id:
             return jsonify({'ok': False, 'error': 'Access denied'}), 403
         
         # 更新資料庫
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        
-        # 準備更新資料
-        update_fields = []
-        update_values = []
-        
-        if 'student_name' in data:
-            update_fields.append('student_name = ?')
-            update_values.append(data['student_name'])
-        if 'student_email' in data:
-            update_fields.append('student_email = ?')
-            update_values.append(data['student_email'])
-        if 'parent_name' in data:
-            update_fields.append('parent_name = ?')
-            update_values.append(data['parent_name'])
-        if 'parent_email' in data:
-            update_fields.append('parent_email = ?')
-            update_values.append(data['parent_email'])
-        if 'relationship' in data:
-            update_fields.append('relationship = ?')
-            update_values.append(data['relationship'])
-        if 'child_name' in data:
-            update_fields.append('child_name = ?')
-            update_values.append(data['child_name'])
-        if 'child_email' in data:
-            update_fields.append('child_email = ?')
-            update_values.append(data['child_email'])
-        if 'citizenship' in data:
-            update_fields.append('citizenship = ?')
-            update_values.append(data['citizenship'])
-        if 'gpa' in data:
-            update_fields.append('gpa = ?')
-            update_values.append(data['gpa'])
-        if 'degree' in data:
-            update_fields.append('degree = ?')
-            update_values.append(data['degree'])
-        if 'countries' in data:
-            update_fields.append('countries = ?')
-            update_values.append(json.dumps(data['countries']))
-        if 'budget' in data:
-            update_fields.append('budget = ?')
-            update_values.append(data['budget'])
-        if 'target_intake' in data:
-            update_fields.append('target_intake = ?')
-            update_values.append(data['target_intake'])
-        if 'user_role' in data:
-            update_fields.append('user_role = ?')
-            update_values.append(data['user_role'])
-        
-        # 添加更新時間
-        update_fields.append('updated_at = ?')
-        update_values.append(datetime.now().isoformat())
-        
-        # 添加 WHERE 條件
-        update_values.append(profile_id)
-        
-        if update_fields:
-            sql = f"UPDATE user_profiles SET {', '.join(update_fields)} WHERE profile_id = ?"
-            cursor.execute(sql, update_values)
-            conn.commit()
+        result = db.update_user_profile(profile_id, data)
+        if not result.get('ok'):
+            return jsonify({'ok': False, 'error': result.get('error', 'Update failed')}), 500
             
-            logger.info(f"User profile updated: {profile_id}")
-            
-        conn.close()
+        logger.info(f"User profile updated: {profile_id}")
         
         return jsonify({'ok': True, 'message': 'Profile updated successfully'})
         
@@ -1272,15 +1171,22 @@ def intake():
         user_data.update(request.get_json())
         
         # 儲存到資料庫
-        db.save_user_profile(user_data)
+        if not db:
+            return jsonify({'ok': False, 'error': 'Database service not available'}), 500
+            
+        result = db.save_user_profile(user_data)
+        if not result.get('ok'):
+            return jsonify({'ok': False, 'error': result.get('error', 'Failed to save profile')}), 500
         
         # 記錄使用統計
-        db.save_usage_stat({
+        stat_result = db.save_usage_stat({
             'user_id': user_data['user_id'],
             'profile_id': profile_id,
             'action_type': 'profile_created',
             'action_details': {'role': user_data.get('user_role')}
         })
+        if not stat_result.get('ok'):
+            logger.warning(f"Failed to save usage stat: {stat_result.get('error')}")
         
         print('User profile saved: {}, role: {}'.format(profile_id, user_data.get("user_role")))
         return jsonify({'ok': True, 'data': {'profile_id': profile_id}})
@@ -1304,51 +1210,29 @@ def chat():
         
         # 獲取用戶資料
         user_profile = {}
+        if not db:
+            logger.error("Database service not available")
+            return jsonify({'ok': False, 'error': 'Database service not available'}), 500
+            
         if profile_id:
-            user_profile = db.get_user_profile(profile_id)
+            profile_result = db.get_user_profile(profile_id)
+            if profile_result and profile_result.get('ok'):
+                user_profile = profile_result.get('data', {})
             logger.info(f"User profile retrieved by profile_id: {bool(user_profile)}")
         else:
             # 如果沒有 profile_id，嘗試從用戶的所有 profile 中獲取最新的
             user_id = request.user.get('user_id')
             if user_id:
-                conn = db.get_connection()
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT profile_id, user_role, student_name, parent_name, student_email, 
-                           parent_email, relationship, child_name, child_email, citizenship, 
-                           gpa, degree, countries, budget, target_intake, created_at, updated_at
-                    FROM user_profiles 
-                    WHERE user_id = ? 
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                ''', (user_id,))
-                
-                profile_data = cursor.fetchone()
-                conn.close()
-                
-                if profile_data:
-                    user_profile = {
-                        'profile_id': profile_data[0],
-                        'user_role': profile_data[1],
-                        'student_name': profile_data[2],
-                        'parent_name': profile_data[3],
-                        'student_email': profile_data[4],
-                        'parent_email': profile_data[5],
-                        'relationship': profile_data[6],
-                        'child_name': profile_data[7],
-                        'child_email': profile_data[8],
-                        'citizenship': profile_data[9],
-                        'gpa': profile_data[10],
-                        'degree': profile_data[11],
-                        'countries': json.loads(profile_data[12]) if profile_data[12] else [],
-                        'budget': profile_data[13],
-                        'target_intake': profile_data[14],
-                        'created_at': profile_data[15],
-                        'updated_at': profile_data[16]
-                    }
-                    logger.info(f"User profile retrieved by user_id: {bool(user_profile)}")
+                profiles_result = db.get_user_profiles(user_id)
+                if profiles_result and profiles_result.get('ok'):
+                    profiles = profiles_result.get('data', [])
+                    if profiles:
+                        user_profile = profiles[0]  # 已經按 created_at DESC 排序
+                        logger.info(f"User profile retrieved by user_id: {bool(user_profile)}")
+                    else:
+                        logger.warning(f"No profile found for user_id: {user_id}")
                 else:
-                    logger.warning(f"No profile found for user_id: {user_id}")
+                    logger.warning(f"Failed to get profiles for user_id: {user_id}")
         
         logger.info(f"Final user profile: {user_profile}")
         logger.info(f"User profile keys: {list(user_profile.keys()) if user_profile else 'No profile'}")
@@ -1544,32 +1428,39 @@ Format requirements:
         if message and message.strip() and profile_id:
             try:
                 # 儲存用戶訊息
-                db.save_chat_message({
+                user_msg_result = db.save_chat_message({
                     'profile_id': profile_id,
-                    'user_id': request.user['user_id'],  # 修復字段名
+                    'user_id': request.user['user_id'],
                     'message_type': 'user',
                     'message_content': message,
                     'language': language,
                     'user_role': user_role
                 })
+                if not user_msg_result.get('ok'):
+                    logger.error(f"Failed to save user message: {user_msg_result.get('error')}")
                 
                 # 儲存 AI 回覆
-                db.save_chat_message({
+                ai_msg_result = db.save_chat_message({
                     'profile_id': profile_id,
-                    'user_id': request.user['user_id'],  # 修復字段名
+                    'user_id': request.user['user_id'],
                     'message_type': 'ai',
                     'message_content': reply,
                     'language': language,
                     'user_role': user_role
                 })
+                if not ai_msg_result.get('ok'):
+                    logger.error(f"Failed to save AI message: {ai_msg_result.get('error')}")
                 
                 # 記錄使用統計
-                db.save_usage_stat({
-                    'user_id': request.user['user_id'],  # 修復字段名
+                stat_result = db.save_usage_stat({
+                    'user_id': request.user['user_id'],
                     'profile_id': profile_id,
                     'action_type': 'chat_message',
                     'action_details': {'language': language, 'user_role': user_role}
                 })
+                if not stat_result.get('ok'):
+                    logger.warning(f"Failed to save usage stat: {stat_result.get('error')}")
+                    
                 logger.info(f"Chat messages saved successfully for profile_id: {profile_id}")
             except Exception as e:
                 logger.error(f"Error saving chat messages: {e}")
@@ -1748,10 +1639,10 @@ def chat_stream():
                 yield "data: [DONE]\n\n"
                 
                 # 8. 保存對話記錄
-                if profile_id and full_response:
+                if profile_id and full_response and db:
                     try:
                         # 保存用戶訊息
-                        db.save_chat_message({
+                        user_msg_result = db.save_chat_message({
                             'profile_id': profile_id,
                             'user_id': user_id,
                             'message_type': 'user',
@@ -1759,9 +1650,11 @@ def chat_stream():
                             'language': language,
                             'user_role': user_role
                         })
+                        if not user_msg_result.get('ok'):
+                            logger.error(f"Failed to save user message: {user_msg_result.get('error')}")
                         
                         # 保存 AI 回應
-                        db.save_chat_message({
+                        ai_msg_result = db.save_chat_message({
                             'profile_id': profile_id,
                             'user_id': user_id,
                             'message_type': 'ai',
@@ -1769,10 +1662,14 @@ def chat_stream():
                             'language': language,
                             'user_role': user_role
                         })
+                        if not ai_msg_result.get('ok'):
+                            logger.error(f"Failed to save AI message: {ai_msg_result.get('error')}")
                         
                         logger.info("Chat messages saved successfully")
                     except Exception as e:
                         logger.error(f"Error saving chat messages: {e}")
+                elif not db:
+                    logger.warning("Database service not available, skipping message save")
                 
                 # 9. 生成並保存摘要（暫時跳過，因為沒有 chat_summaries 表）
                 
