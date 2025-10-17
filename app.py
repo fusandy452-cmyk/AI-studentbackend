@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from flask import Flask, request, jsonify, redirect, send_file, Response, stream_with_context
+from flask import Flask, request, jsonify, redirect, send_file, Response, stream_with_context, make_response
 from flask_cors import CORS
 import os
 import jwt
@@ -314,6 +314,26 @@ except Exception as e:
     logger.error(f"Database initialization failed: {e}")
     db = None
 
+# 安全 Cookie 設置函數
+def set_secure_cookie(response, key, value, max_age=86400):
+    """設置安全的 Cookie"""
+    # 檢查是否為 HTTPS 環境
+    is_secure = request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https'
+    
+    # 設置 Cookie 屬性
+    response.set_cookie(
+        key,
+        value,
+        max_age=max_age,
+        path='/',
+        secure=is_secure,  # 只在 HTTPS 下傳輸
+        httponly=False,    # 允許 JavaScript 訪問（SSE 需要）
+        samesite='Lax'     # 防止 CSRF 攻擊
+    )
+    
+    logger.info(f"Secure cookie set: {key} (secure={is_secure}, samesite=Lax)")
+    return response
+
 # JWT 驗證裝飾器
 def verify_jwt_token(f):
     """JWT 驗證裝飾器"""
@@ -416,9 +436,9 @@ def health_check():
         db_status = "healthy"
         try:
             if db:
-                users_count = db.get_users_count()
-                profiles_count = db.get_profiles_count()
-                messages_count = db.get_messages_count()
+            users_count = db.get_users_count()
+            profiles_count = db.get_profiles_count()
+            messages_count = db.get_messages_count()
                 today_active = db.get_today_active_users()
             else:
                 db_status = "database_not_initialized"
@@ -537,6 +557,25 @@ def google_callback():
             <body>
                 <script>
                     // 將 token 傳遞給父視窗
+                    // 設置安全的 JWT Cookie
+                    function setSecureCookie(name, value) {{
+                        const isSecure = window.location.protocol === 'https:';
+                        let cookieAttributes = [
+                            `${{name}}=${{value}}`,
+                            'path=/',
+                            'max-age=86400',
+                            'SameSite=Lax',
+                            'HttpOnly=false'
+                        ];
+                        if (isSecure) {{
+                            cookieAttributes.push('Secure');
+                        }}
+                        document.cookie = cookieAttributes.join('; ');
+                    }}
+                    
+                    // 設置 JWT Cookie
+                    setSecureCookie('jwt', '{jwt_token}');
+                    
                     if (window.opener) {{
                         window.opener.postMessage({{
                             type: 'GOOGLE_LOGIN_SUCCESS',
@@ -563,8 +602,10 @@ def google_callback():
             """
             return html_content
         else:
-            # 一般登入：重定向到前端並帶上 token
-            return redirect('https://aistudent.zeabur.app?token=' + jwt_token)
+            # 一般登入：重定向到前端並帶上 token，同時設置安全的 Cookie
+            response = make_response(redirect('https://aistudent.zeabur.app?token=' + jwt_token))
+            set_secure_cookie(response, 'jwt', jwt_token)
+            return response
         
     except Exception as e:
         logger.error('Google callback error: {}'.format(e))
@@ -698,12 +739,55 @@ def line_callback():
         
         jwt_token = jwt.encode(token_payload, SESSION_SECRET, algorithm='HS256')
         
-        # 重定向到前端
-        return redirect(f'{FRONTEND_URL}/?token={jwt_token}&provider=line')
+        # 重定向到前端並設置安全的 Cookie
+        response = make_response(redirect(f'{FRONTEND_URL}/?token={jwt_token}&provider=line'))
+        set_secure_cookie(response, 'jwt', jwt_token)
+        return response
         
     except Exception as e:
         logger.error(f'LINE callback error: {e}')
         return redirect(f'{FRONTEND_URL}/?error=line_callback_failed')
+
+# 跨設備用戶同步
+@app.route('/api/v1/user/sync', methods=['GET'])
+@verify_jwt_token
+def sync_user_data():
+    """跨設備用戶資料同步"""
+    try:
+        user_id = request.user.get('user_id')
+        logger.info(f"User sync request from user_id: {user_id}")
+        
+        # 獲取用戶基本資料
+        user_data = db.get_user_by_id(user_id)
+        if not user_data:
+            return jsonify({'ok': False, 'error': 'User not found'}), 404
+        
+        # 獲取用戶的最新 profile 資料
+        profiles = db.get_user_profiles(user_id)
+        latest_profile = None
+        if profiles:
+            # 取最新的 profile
+            latest_profile = max(profiles, key=lambda p: p.get('created_at', ''))
+        
+        # 構建同步資料
+        sync_data = {
+            'user': {
+                'userId': user_data.get('user_id'),
+                'email': user_data.get('email'),
+                'name': user_data.get('name'),
+                'avatar': user_data.get('avatar'),
+                'provider': user_data.get('provider')
+            },
+            'profileId': latest_profile.get('profile_id') if latest_profile else None,
+            'lastSync': datetime.utcnow().isoformat()
+        }
+        
+        logger.info(f"User sync successful for user_id: {user_id}")
+        return jsonify({'ok': True, 'data': sync_data})
+        
+    except Exception as e:
+        logger.error(f'User sync error: {e}')
+        return jsonify({'ok': False, 'error': 'Sync failed'}), 500
 
 # 用戶資料檢索
 @app.route('/api/v1/user/profile/<profile_id>', methods=['GET'])
@@ -1459,33 +1543,33 @@ Format requirements:
         # 儲存聊天記錄到資料庫（只有在有 profile_id 時才儲存）
         if message and message.strip() and profile_id:
             try:
-                # 儲存用戶訊息
-                db.save_chat_message({
-                    'profile_id': profile_id,
+            # 儲存用戶訊息
+            db.save_chat_message({
+                'profile_id': profile_id,
                     'user_id': request.user['user_id'],  # 修復字段名
-                    'message_type': 'user',
-                    'message_content': message,
-                    'language': language,
-                    'user_role': user_role
-                })
-                
-                # 儲存 AI 回覆
-                db.save_chat_message({
-                    'profile_id': profile_id,
+                'message_type': 'user',
+                'message_content': message,
+                'language': language,
+                'user_role': user_role
+            })
+            
+            # 儲存 AI 回覆
+            db.save_chat_message({
+                'profile_id': profile_id,
                     'user_id': request.user['user_id'],  # 修復字段名
-                    'message_type': 'ai',
-                    'message_content': reply,
-                    'language': language,
-                    'user_role': user_role
-                })
-                
-                # 記錄使用統計
-                db.save_usage_stat({
+                'message_type': 'ai',
+                'message_content': reply,
+                'language': language,
+                'user_role': user_role
+            })
+            
+            # 記錄使用統計
+            db.save_usage_stat({
                     'user_id': request.user['user_id'],  # 修復字段名
-                    'profile_id': profile_id,
-                    'action_type': 'chat_message',
-                    'action_details': {'language': language, 'user_role': user_role}
-                })
+                'profile_id': profile_id,
+                'action_type': 'chat_message',
+                'action_details': {'language': language, 'user_role': user_role}
+            })
                 logger.info(f"Chat messages saved successfully for profile_id: {profile_id}")
             except Exception as e:
                 logger.error(f"Error saving chat messages: {e}")
@@ -2207,13 +2291,13 @@ def analyze_student_progress(chat_stats, recent_topics, usage_stats, created_at)
 
 if __name__ == '__main__':
     try:
-        # 初始化超級管理員
-        init_super_admin()
-        
-        # 啟動應用
-        port = int(os.getenv('PORT', 5000))
+    # 初始化超級管理員
+    init_super_admin()
+    
+    # 啟動應用
+    port = int(os.getenv('PORT', 5000))
         logger.info(f"Starting Flask app on port {port}")
-        app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False)
     except Exception as e:
         logger.error(f"Failed to start Flask app: {e}")
         raise
