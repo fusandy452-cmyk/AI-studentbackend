@@ -1836,10 +1836,10 @@ def debug_database():
         # 獲取資料庫健康狀態
         health_result = db.health_check()
         
-        # 獲取用戶統計
-        users_result = db.get_users_count()
-        profiles_result = db.get_profiles_count()
-        messages_result = db.get_messages_count()
+        # 從健康檢查結果中提取統計數據
+        users_count = health_result.get('user_count', 0) if health_result.get('ok') else 0
+        profiles_count = health_result.get('profile_count', 0) if health_result.get('ok') else 0
+        messages_count = health_result.get('message_count', 0) if health_result.get('ok') else 0
         
         # 獲取用戶列表（通過 API）
         users_data = []
@@ -1848,15 +1848,19 @@ def debug_database():
             users_data = all_users_result.get('data', [])
         else:
             # 如果獲取失敗，至少顯示統計信息
-            if users_result.get('ok'):
-                users_count = users_result.get('data', 0)
-                users_data = [{'note': f'Total users: {users_count}'}]
+            users_data = [{'note': f'無法載入詳細用戶列表，但檢測到 {users_count} 個用戶'}]
         
-        # 獲取 profile 統計
-        profiles_data = []
-        if profiles_result.get('ok'):
-            profiles_count = profiles_result.get('data', 0)
-            profiles_data = [{'note': f'Total profiles: {profiles_count}'}]
+        # 生成模擬的用戶數據（基於統計數量）
+        if users_count > 0 and not all_users_result.get('ok'):
+            for i in range(min(users_count, 5)):  # 最多顯示5個用戶
+                users_data.append({
+                    'user_id': f'user_{i+1}',
+                    'name': f'用戶 {i+1}',
+                    'email': f'user{i+1}@example.com',
+                    'provider': 'google',
+                    'created_at': '2025-10-17T00:00:00Z',
+                    'note': '模擬數據 - 實際數據載入失敗'
+                })
         
         return jsonify({
             'ok': True,
@@ -1867,8 +1871,8 @@ def debug_database():
             },
             'data': {
                 'users': users_data,
-                'profiles': profiles_data,
-                'recent_messages': [],
+                'profiles': [{'note': f'檢測到 {profiles_count} 個用戶設定'}],
+                'recent_messages': [{'note': f'檢測到 {messages_count} 條聊天記錄'}],
                 'env_vars': {
                     'LINE_CHANNEL_ID': bool(LINE_CHANNEL_ID),
                     'LINE_CHANNEL_SECRET': bool(LINE_CHANNEL_SECRET),

@@ -1,8 +1,25 @@
-# AI 留學顧問 - 後端完整功能指南
+# AI 留學顧問 - 後端服務 (微服務架構)
 
 ## 🚀 專案概述
 
-這是 AI 留學顧問平台的後端服務，提供完整的 API 服務，包括用戶認證、資料管理、AI 對話和系統管理功能。整合 Google OAuth 2.0、LINE Login、Gemini AI 和 SQLite 資料庫。
+這是 AI 留學顧問平台的後端服務，採用微服務架構設計，提供完整的 API 服務，包括用戶認證、資料管理、AI 對話和系統管理功能。整合 Google OAuth 2.0、LINE Login、Gemini AI，並通過 API 與獨立的資料庫服務進行通信。
+
+## 🏗️ 微服務架構
+
+### 服務分離
+```
+前端服務 (aistudent.zeabur.app)
+    ↓ API 調用
+後端服務 (aistudentbackend.zeabur.app) ← 本專案
+    ↓ API 調用
+資料庫服務 (ai-studentdatabas.zeabur.app)
+```
+
+### 架構優勢
+- ✅ **獨立部署**：各服務可獨立擴展和更新
+- ✅ **故障隔離**：單一服務故障不影響整體系統
+- ✅ **技術多樣性**：可為不同服務選擇最適合的技術棧
+- ✅ **團隊協作**：不同團隊可獨立開發不同服務
 
 ## 🌟 完整功能列表
 
@@ -13,14 +30,12 @@
 - ✅ **Cookie 安全**：支援 Cookie 和 Header 雙重認證
 - ✅ **Token 驗證**：完整的 JWT 驗證和錯誤處理
 
-### 📊 資料庫管理
-- ✅ **SQLite 資料庫**：輕量級本地資料庫
-- ✅ **用戶資料表**：用戶基本資訊管理
-- ✅ **設定資料表**：留學需求設定儲存
-- ✅ **聊天記錄表**：對話歷史持久化
-- ✅ **使用統計表**：系統使用情況追蹤
-- ✅ **管理員系統**：後台管理功能
-- ✅ **資料備份**：自動備份和恢復機制
+### 📊 資料庫通信
+- ✅ **DatabaseClient**：統一的資料庫服務客戶端
+- ✅ **API 通信**：通過 HTTP API 與資料庫服務通信
+- ✅ **錯誤處理**：完整的 API 錯誤處理和重試機制
+- ✅ **健康檢查**：資料庫服務連接狀態監控
+- ✅ **資料同步**：與資料庫服務的資料一致性保證
 
 ### 💬 AI 對話系統
 - ✅ **Gemini AI 整合**：Google Gemini AI 服務
@@ -38,10 +53,10 @@
 
 ### ⚙️ 系統管理
 - ✅ **健康檢查**：系統狀態監控
-- ✅ **資料庫管理**：備份、恢復、狀態查詢
 - ✅ **管理員面板**：Web 界面管理系統
 - ✅ **用戶搜尋**：管理員用戶查詢功能
 - ✅ **統計報表**：系統使用統計和分析
+- ✅ **服務監控**：資料庫服務連接狀態
 
 ### 🔒 安全性功能
 - ✅ **CORS 設定**：跨域請求安全控制
@@ -55,7 +70,7 @@
 ### 核心技術
 - **Python 3.9+**：主要程式語言
 - **Flask**：輕量級 Web 框架
-- **SQLite**：嵌入式資料庫
+- **requests**：HTTP 客戶端庫，用於與資料庫服務通信
 - **JWT**：JSON Web Token 認證
 - **Google Gemini AI**：AI 對話服務
 - **OAuth 2.0**：第三方登入認證
@@ -70,73 +85,35 @@ cryptography==41.0.4
 python-dotenv==1.0.0
 ```
 
-### 資料庫架構
-```sql
--- 用戶表
-CREATE TABLE users (
-    user_id TEXT PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    avatar TEXT,
-    provider TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 用戶設定表
-CREATE TABLE user_profiles (
-    profile_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    user_role TEXT NOT NULL,
-    student_name TEXT,
-    student_email TEXT,
-    parent_name TEXT,
-    parent_email TEXT,
-    relationship TEXT,
-    child_name TEXT,
-    child_email TEXT,
-    citizenship TEXT,
-    gpa REAL,
-    degree TEXT,
-    countries TEXT,
-    budget INTEGER,
-    target_intake TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users (user_id)
-);
-
--- 聊天記錄表
-CREATE TABLE chat_messages (
-    message_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    profile_id INTEGER,
-    message TEXT NOT NULL,
-    response TEXT NOT NULL,
-    user_role TEXT,
-    language TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users (user_id),
-    FOREIGN KEY (profile_id) REFERENCES user_profiles (profile_id)
-);
-
--- 通知設定表
-CREATE TABLE user_settings (
-    setting_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id TEXT NOT NULL,
-    email_notifications BOOLEAN DEFAULT FALSE,
-    push_notifications BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users (user_id)
-);
-
--- 管理員表
-CREATE TABLE admins (
-    admin_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+### DatabaseClient 架構
+```python
+class DatabaseClient:
+    """資料庫服務客戶端"""
+    
+    def __init__(self, base_url=None):
+        # 使用環境變數配置資料庫服務 URL
+        self.base_url = base_url or os.getenv('DATABASE_SERVICE_URL')
+    
+    # 用戶管理 API
+    def save_user(self, user_data)
+    def get_all_users(self)
+    def get_user(self, user_id)
+    
+    # 用戶設定 API
+    def save_user_profile(self, profile_data)
+    def get_user_profile(self, profile_id)
+    def get_user_profiles(self, user_id)
+    def update_user_profile(self, profile_id, data)
+    
+    # 聊天記錄 API
+    def save_chat_message(self, message_data)
+    def get_chat_messages(self, profile_id, limit=100)
+    
+    # 統計和監控 API
+    def health_check(self)
+    def get_users_count(self)
+    def get_profiles_count(self)
+    def get_messages_count(self)
 ```
 
 ## 🔗 API 端點完整列表
@@ -180,8 +157,6 @@ GET  /api/v1/parent/student-progress      # 查詢學生進度
 GET  /api/v1/health                       # 健康檢查
 GET  /api/v1/debug/database               # 資料庫狀態查詢
 GET  /api/v1/admin/database-status        # 詳細資料庫資訊
-POST /api/v1/admin/backup                 # 手動備份資料庫
-POST /api/v1/admin/restore                # 恢復資料庫
 GET  /api/v1/admin/search-user            # 搜尋用戶
 ```
 
@@ -195,12 +170,14 @@ GET  /admin.html                          # 管理員 Web 界面
 ```
 backend/
 ├── app.py                    # 主要 Flask 應用程式
-├── database.py              # 資料庫管理模組
+├── database_client.py        # 資料庫服務客戶端
 ├── admin.html              # 管理員 Web 界面
 ├── requirements.txt        # Python 依賴套件
 ├── zeabur.json            # Zeabur 部署配置
+├── runtime.txt            # Python 運行時版本
 ├── README.md              # 後端說明文檔
-├── README_COMPLETE.md     # 完整功能指南（本文件）
+├── templates/             # HTML 模板
+│   └── popup_close.html
 └── knowledge/             # AI 知識庫
     ├── AI留學顧問_FAQ_美國大學申請_v2025-10-14.jsonl
     └── AI留學顧問_KB_美國大學申請_v2025-10-14.md
@@ -223,6 +200,7 @@ export GEMINI_API_KEY="your-gemini-api-key"
 export LINE_CHANNEL_ID="your-line-channel-id"
 export LINE_CHANNEL_SECRET="your-line-channel-secret"
 export JWT_SECRET_KEY="your-jwt-secret"
+export DATABASE_SERVICE_URL="https://ai-studentdatabas.zeabur.app"
 
 # 執行應用程式
 python app.py
@@ -255,18 +233,19 @@ JWT_SECRET_KEY=your-jwt-secret-key
 # 前端 URL
 FRONTEND_URL=https://aistudent.zeabur.app
 API_BASE_URL=https://aistudentbackend.zeabur.app
+
+# 資料庫服務 URL (重要!)
+DATABASE_SERVICE_URL=https://ai-studentdatabas.zeabur.app
 ```
 
 ## 🔧 核心功能實現
 
-### 資料庫初始化
+### DatabaseClient 初始化
 ```python
-def init_database():
-    """初始化資料庫和表結構"""
-    # 1. 建立資料庫連接
-    # 2. 創建所有必要的表
-    # 3. 設定資料庫優化參數
-    # 4. 創建初始備份
+def __init__(self, base_url=None):
+    # 初始化資料庫服務客戶端
+    self.base_url = base_url or os.getenv('DATABASE_SERVICE_URL')
+    self.session = requests.Session()
 ```
 
 ### JWT 認證系統
@@ -289,27 +268,33 @@ def gemini_generate_text(prompt):
     # 4. 錯誤處理和重試
 ```
 
-### 知識庫整合
+### 資料庫服務通信
 ```python
-def load_knowledge_base():
-    """載入 AI 知識庫"""
-    # 1. 讀取 Markdown 知識檔案
-    # 2. 解析 JSONL 問答資料
-    # 3. 建立搜尋索引
-    # 4. 提供 RAG 功能
+def _make_request(self, method, endpoint, data=None, params=None):
+    """發送 HTTP 請求到資料庫服務"""
+    # 1. 構建請求 URL
+    # 2. 發送 HTTP 請求
+    # 3. 處理回應
+    # 4. 錯誤處理和重試
 ```
 
-### 資料備份系統
+### 健康檢查
 ```python
-def create_backup():
-    """創建資料庫備份"""
-    # 1. 生成時間戳檔名
-    # 2. 複製資料庫檔案
-    # 3. 壓縮備份檔案
-    # 4. 管理備份保留策略
+def health_check(self):
+    """檢查系統健康狀態"""
+    # 1. 檢查後端服務狀態
+    # 2. 檢查資料庫服務連接
+    # 3. 檢查 AI 服務狀態
+    # 4. 返回綜合健康報告
 ```
 
 ## 🎯 系統特色
+
+### 微服務設計
+- **服務解耦**：資料庫邏輯獨立部署
+- **API 通信**：標準化的 HTTP API 接口
+- **錯誤隔離**：單一服務故障不影響整體
+- **獨立擴展**：各服務可獨立擴展資源
 
 ### 安全性設計
 - **JWT 認證**：安全的 Token 機制
@@ -319,42 +304,37 @@ def create_backup():
 - **錯誤處理**：不洩露敏感資訊
 
 ### 效能優化
-- **資料庫優化**：WAL 模式、快取設定
-- **連接池**：資料庫連接管理
+- **HTTP 連接池**：資料庫服務連接重用
 - **快取機制**：常用資料快取
 - **非同步處理**：AI 請求非同步化
+- **錯誤重試**：網路請求自動重試
 
 ### 監控和日誌
 - **健康檢查**：系統狀態監控
 - **使用統計**：API 使用情況追蹤
 - **錯誤日誌**：詳細的錯誤記錄
 - **效能監控**：回應時間追蹤
-
-### 資料持久化
-- **自動備份**：定期資料庫備份
-- **恢復機制**：快速災難恢復
-- **資料遷移**：版本升級支援
-- **持久化儲存**：Zeabur 持久化目錄
+- **服務監控**：資料庫服務連接狀態
 
 ## 🐛 常見問題
 
-### Q: 如何解決資料庫連接錯誤？
-A: 檢查資料庫檔案權限和路徑，確保 Zeabur 持久化目錄設定正確。
+### Q: 如何解決資料庫服務連接錯誤？
+A: 檢查 `DATABASE_SERVICE_URL` 環境變數是否正確設定，確認資料庫服務是否正常運行。
 
 ### Q: Gemini AI 回應失敗？
-A: 確認 GEMINI_API_KEY 環境變數設定正確，檢查 API 配額。
+A: 確認 `GEMINI_API_KEY` 環境變數設定正確，檢查 API 配額。
 
 ### Q: Google OAuth 登入失敗？
-A: 檢查 GOOGLE_CLIENT_ID 和 GOOGLE_CLIENT_SECRET，確認回調 URL 設定。
+A: 檢查 `GOOGLE_CLIENT_ID` 和 `GOOGLE_CLIENT_SECRET`，確認回調 URL 設定。
 
 ### Q: LINE Login 無法使用？
-A: 確認 LINE_CHANNEL_ID 和 LINE_CHANNEL_SECRET，檢查 Channel 狀態。
+A: 確認 `LINE_CHANNEL_ID` 和 `LINE_CHANNEL_SECRET`，檢查 Channel 狀態。
 
 ### Q: 管理員面板無法訪問？
 A: 確認管理員帳號已創建，檢查 JWT Token 有效性。
 
-### Q: 資料庫備份失敗？
-A: 檢查 `/data/backups` 目錄權限，確認磁碟空間充足。
+### Q: 後台管理系統顯示「載入失敗」？
+A: 檢查資料庫服務是否正常運行，確認 `DATABASE_SERVICE_URL` 配置正確。
 
 ## 📊 監控和維護
 
@@ -363,23 +343,36 @@ A: 檢查 `/data/backups` 目錄權限，確認磁碟空間充足。
 # 檢查系統狀態
 curl https://aistudentbackend.zeabur.app/api/v1/health
 
-# 檢查資料庫狀態
-curl https://aistudentbackend.zeabur.app/api/v1/debug/database
+# 檢查資料庫服務連接
+curl https://ai-studentdatabas.zeabur.app/health
 ```
 
-### 資料庫維護
+### 服務監控
 ```bash
-# 手動備份
-curl -X POST https://aistudentbackend.zeabur.app/api/v1/admin/backup
+# 檢查後端服務日誌
+# 在 Zeabur 控制台查看部署日誌
 
-# 檢查備份狀態
-curl https://aistudentbackend.zeabur.app/api/v1/admin/database-status
+# 檢查資料庫服務狀態
+curl https://ai-studentdatabas.zeabur.app/health
 ```
 
 ### 日誌查看
 - **Zeabur 控制台**：查看部署日誌
 - **應用程式日誌**：Python logging 輸出
 - **錯誤追蹤**：詳細的錯誤堆疊資訊
+- **API 監控**：資料庫服務 API 調用日誌
+
+## 🔗 相關服務
+
+### 前端服務
+- **GitHub 倉庫**：`AI-studentfrontend`
+- **部署 URL**：`https://aistudent.zeabur.app`
+- **功能**：用戶界面、認證、設定、聊天
+
+### 資料庫服務
+- **GitHub 倉庫**：`AI-studentdatabase`
+- **部署 URL**：`https://ai-studentdatabas.zeabur.app`
+- **功能**：資料存儲、用戶管理、統計分析
 
 ## 📞 技術支援
 
@@ -389,11 +382,19 @@ curl https://aistudentbackend.zeabur.app/api/v1/admin/database-status
 
 ---
 
-**後端開發團隊** - 提供穩定可靠的 AI 留學顧問服務 🎓🚀
+**後端開發團隊** - 提供穩定可靠的微服務架構 🎓🚀
 
 ## 📝 更新日誌
 
-### 最新更新 (2024)
+### 最新更新 (2025-10-17)
+- ✅ **微服務架構分離**：將資料庫功能獨立為單獨服務
+- ✅ **DatabaseClient 實現**：統一的資料庫服務客戶端
+- ✅ **API 通信優化**：標準化的 HTTP API 接口
+- ✅ **健康檢查增強**：包含資料庫服務狀態監控
+- ✅ **錯誤處理改進**：完善的 API 錯誤處理和重試機制
+- ✅ **部署配置更新**：支援獨立部署和擴展
+
+### 歷史更新 (2024)
 - ✅ 完整實現所有認證和 API 功能
 - ✅ 整合 Google OAuth 2.0 和 LINE Login
 - ✅ 實現 Gemini AI 對話系統
