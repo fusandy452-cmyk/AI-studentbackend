@@ -1543,33 +1543,33 @@ Format requirements:
         # 儲存聊天記錄到資料庫（只有在有 profile_id 時才儲存）
         if message and message.strip() and profile_id:
             try:
-            # 儲存用戶訊息
-            db.save_chat_message({
-                'profile_id': profile_id,
+                # 儲存用戶訊息
+                db.save_chat_message({
+                    'profile_id': profile_id,
                     'user_id': request.user['user_id'],  # 修復字段名
-                'message_type': 'user',
-                'message_content': message,
-                'language': language,
-                'user_role': user_role
-            })
-            
-            # 儲存 AI 回覆
-            db.save_chat_message({
-                'profile_id': profile_id,
+                    'message_type': 'user',
+                    'message_content': message,
+                    'language': language,
+                    'user_role': user_role
+                })
+                
+                # 儲存 AI 回覆
+                db.save_chat_message({
+                    'profile_id': profile_id,
                     'user_id': request.user['user_id'],  # 修復字段名
-                'message_type': 'ai',
-                'message_content': reply,
-                'language': language,
-                'user_role': user_role
-            })
-            
-            # 記錄使用統計
-            db.save_usage_stat({
+                    'message_type': 'ai',
+                    'message_content': reply,
+                    'language': language,
+                    'user_role': user_role
+                })
+                
+                # 記錄使用統計
+                db.save_usage_stat({
                     'user_id': request.user['user_id'],  # 修復字段名
-                'profile_id': profile_id,
-                'action_type': 'chat_message',
-                'action_details': {'language': language, 'user_role': user_role}
-            })
+                    'profile_id': profile_id,
+                    'action_type': 'chat_message',
+                    'action_details': {'language': language, 'user_role': user_role}
+                })
                 logger.info(f"Chat messages saved successfully for profile_id: {profile_id}")
             except Exception as e:
                 logger.error(f"Error saving chat messages: {e}")
@@ -2291,13 +2291,13 @@ def analyze_student_progress(chat_stats, recent_topics, usage_stats, created_at)
 
 if __name__ == '__main__':
     try:
-    # 初始化超級管理員
-    init_super_admin()
-    
-    # 啟動應用
-    port = int(os.getenv('PORT', 5000))
+        # 初始化超級管理員
+        init_super_admin()
+        
+        # 啟動應用
+        port = int(os.getenv('PORT', 5000))
         logger.info(f"Starting Flask app on port {port}")
-    app.run(host='0.0.0.0', port=port, debug=False)
+        app.run(host='0.0.0.0', port=port, debug=False)
     except Exception as e:
         logger.error(f"Failed to start Flask app: {e}")
         raise
