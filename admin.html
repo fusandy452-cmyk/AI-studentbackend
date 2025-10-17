@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>AI 留學顧問 - 後台管理系統</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -14,37 +14,420 @@
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        
+        /* iOS Safari 兼容性修復 */
+        * {
+            -webkit-text-size-adjust: 100%;
+            -webkit-tap-highlight-color: transparent;
+            box-sizing: border-box;
+        }
+        
+        body {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            overflow-x: hidden;
+        }
+        
+        /* 防止 iOS Safari 自動縮放 */
+        @media screen and (max-width: 768px) {
+            body {
+                font-size: 16px !important;
+                -webkit-text-size-adjust: 100%;
+                position: relative;
+            }
+            
+            input, select, textarea {
+                font-size: 16px !important;
+                -webkit-appearance: none;
+                border-radius: 8px;
+                border: 1px solid #d1d5db;
+                padding: 12px;
+                width: 100%;
+            }
+            
+            /* 修復 iOS Safari 中的 select 樣式 */
+            select {
+                background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e");
+                background-repeat: no-repeat;
+                background-position: right 12px center;
+                background-size: 16px;
+                padding-right: 40px;
+            }
+        }
+        
+        /* iOS Safari 按鈕兼容性 */
+        button, a {
+            -webkit-appearance: none;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            cursor: pointer;
+            border: none;
+            outline: none;
+        }
+        
+        /* 確保可點擊元素在 iOS 中正常工作 */
+        .sidebar-item, .clickable {
+            min-height: 44px;
+            min-width: 44px;
+            display: flex;
+            align-items: center;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            position: relative;
+        }
+        
+        /* 移動端側邊欄優化 */
+        @media screen and (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                top: 0;
+                left: -280px;
+                width: 280px;
+                height: 100vh;
+                z-index: 1000;
+                transition: left 0.3s ease;
+                background: white;
+                box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            }
+            
+            .sidebar.open {
+                left: 0;
+            }
+            
+            .main-content {
+                margin-left: 0;
+                width: 100%;
+                padding: 16px;
+            }
+            
+            .mobile-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 16px;
+                background: white;
+                border-bottom: 1px solid #e5e7eb;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                z-index: 999;
+                height: 60px;
+            }
+            
+            .content-wrapper {
+                margin-top: 60px;
+                padding-top: 20px;
+            }
+        }
+        
+        /* 桌面端隱藏移動端元素 */
+        @media screen and (min-width: 769px) {
+            .mobile-header {
+                display: none;
+            }
+            
+            .sidebar {
+                position: fixed;
+                left: 0;
+            }
+            
+            .main-content {
+                margin-left: 280px;
+            }
+        }
+        
+        /* iOS Safari 滾動修復 */
+        .overflow-auto, .overflow-y-auto {
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        /* 修復 iOS Safari 中的 flexbox 問題 */
+        .flex {
+            display: -webkit-flex;
+            display: flex;
+        }
+        
+        /* 修復 iOS Safari 中的 grid 問題 */
+        .grid {
+            display: -webkit-grid;
+            display: grid;
+        }
+        
+        /* 修復 iOS Safari 中的 transform 問題 */
+        .transform {
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+        
+        /* 修復 iOS Safari 中的 position fixed 問題 */
+        .fixed {
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+        
+        /* 修復 iOS Safari 中的 z-index 問題 */
+        .z-10, .z-20, .z-30, .z-40, .z-50 {
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+        
+        /* 修復 iOS Safari 中的 backdrop-filter 問題 */
+        .backdrop-blur {
+            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+        }
+        
+        /* 移動端表格優化 */
+        @media screen and (max-width: 768px) {
+            .table-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            
+            table {
+                min-width: 600px;
+            }
+            
+            .table-responsive {
+                display: block;
+                width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            
+            /* 卡片式表格顯示 */
+            .mobile-table-card {
+                display: none;
+            }
+            
+            @media screen and (max-width: 640px) {
+                .desktop-table {
+                    display: none;
+                }
+                
+                .mobile-table-card {
+                    display: block;
+                }
+                
+                .mobile-card {
+                    background: white;
+                    border-radius: 8px;
+                    padding: 16px;
+                    margin-bottom: 12px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                }
+            }
+        }
+        
+        /* 修復 iOS Safari 中的 text-shadow 問題 */
+        .text-shadow {
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* 修復 iOS Safari 中的 box-shadow 問題 */
+        .shadow, .shadow-lg, .shadow-xl {
+            -webkit-box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+        }
+        
+        /* 修復 iOS Safari 中的 border-radius 問題 */
+        .rounded, .rounded-lg, .rounded-xl {
+            -webkit-border-radius: 0.375rem;
+            border-radius: 0.375rem;
+        }
+        
+        /* 修復 iOS Safari 中的 transition 問題 */
+        .transition {
+            -webkit-transition: all 0.15s ease-in-out;
+            transition: all 0.15s ease-in-out;
+        }
+        
+        /* 修復 iOS Safari 中的 hover 效果問題 */
+        @media (hover: hover) {
+            .hover\:bg-gray-50:hover {
+                background-color: #f9fafb;
+            }
+        }
+        
+        /* 修復 iOS Safari 中的 focus 效果問題 */
+        .focus\:ring-2:focus {
+            outline: 2px solid transparent;
+            outline-offset: 2px;
+            box-shadow: 0 0 0 2px #3b82f6;
+        }
+        
+        /* 修復 iOS Safari 中的 table 問題 */
+        table {
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+        
+        /* 修復 iOS Safari 中的 modal 問題 */
+        .modal {
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+        
+        /* 移動端模態框優化 */
+        @media screen and (max-width: 768px) {
+            .modal {
+                margin: 16px;
+                max-height: calc(100vh - 32px);
+                border-radius: 12px;
+            }
+            
+            /* 移動端按鈕優化 */
+            .clickable {
+                min-height: 44px;
+                min-width: 44px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            
+            /* 移動端輸入框優化 */
+            input, select, textarea {
+                font-size: 16px !important;
+                padding: 12px;
+                border-radius: 8px;
+            }
+            
+            /* 移動端卡片間距優化 */
+            .mobile-card {
+                margin-bottom: 16px;
+            }
+            
+            /* 移動端表格滾動優化 */
+            .table-responsive {
+                border-radius: 8px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+        }
+        
+        /* 修復 iOS Safari 中的 chart 問題 */
+        canvas {
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+        }
+        
+        /* 移動端響應式優化 */
+        @media screen and (max-width: 768px) {
+            /* 側邊欄在移動端隱藏 */
+            .w-64 {
+                width: 0;
+                overflow: hidden;
+            }
+            
+            /* 主內容區在移動端全寬 */
+            .flex-1 {
+                flex: 1;
+                width: 100%;
+            }
+            
+            /* 調整卡片間距 */
+            .grid {
+                gap: 1rem;
+            }
+            
+            /* 調整表格在移動端的顯示 */
+            .overflow-x-auto {
+                -webkit-overflow-scrolling: touch;
+            }
+            
+            /* 調整按鈕大小 */
+            .clickable {
+                min-height: 48px;
+                min-width: 48px;
+            }
+            
+            /* 調整模態框在移動端的顯示 */
+            .max-w-4xl, .max-w-6xl {
+                max-width: 95%;
+                margin: 1rem;
+            }
+            
+            /* 調整文字大小 */
+            .text-2xl {
+                font-size: 1.5rem;
+            }
+            
+            .text-xl {
+                font-size: 1.25rem;
+            }
+        }
+        
+        /* 超小屏幕優化 */
+        @media screen and (max-width: 480px) {
+            /* 進一步縮小間距 */
+            .p-6 {
+                padding: 1rem;
+            }
+            
+            .px-4 {
+                padding-left: 0.75rem;
+                padding-right: 0.75rem;
+            }
+            
+            .py-2 {
+                padding-top: 0.5rem;
+                padding-bottom: 0.5rem;
+            }
+            
+            /* 調整表格字體大小 */
+            .text-sm {
+                font-size: 0.875rem;
+            }
+            
+            /* 調整按鈕大小 */
+            .px-4.py-2 {
+                padding: 0.75rem 1rem;
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-100">
+    <!-- 移動端導航頭部 -->
+    <div class="mobile-header">
+        <button onclick="toggleSidebar()" class="clickable">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+            </svg>
+        </button>
+        <h1 class="text-lg font-bold text-gray-800">AI 留學顧問</h1>
+        <div class="w-6"></div> <!-- 佔位符保持平衡 -->
+    </div>
+
     <div class="flex h-screen">
         <!-- 側邊欄 -->
-        <div class="w-64 bg-white shadow-lg">
+        <div id="sidebar" class="sidebar w-64 bg-white shadow-lg">
             <div class="p-6">
                 <h1 class="text-xl font-bold text-gray-800">AI 留學顧問</h1>
                 <p class="text-sm text-gray-600 mt-1">後台管理系統</p>
             </div>
             <nav class="mt-6">
                 <div class="px-4 space-y-2">
-                    <a href="#" onclick="showSection('dashboard')" class="sidebar-item block px-4 py-2 rounded-lg cursor-pointer">
+                    <a href="#" onclick="showSection('dashboard')" class="sidebar-item clickable block px-4 py-2 rounded-lg cursor-pointer">
                         📊 儀表板
                     </a>
-                    <a href="#" onclick="showSection('users')" class="sidebar-item block px-4 py-2 rounded-lg cursor-pointer">
+                    <a href="#" onclick="showSection('users')" class="sidebar-item clickable block px-4 py-2 rounded-lg cursor-pointer">
                         👥 用戶管理
                     </a>
-                    <a href="#" onclick="showSection('user-profiles')" class="sidebar-item block px-4 py-2 rounded-lg cursor-pointer">
+                    <a href="#" onclick="showSection('user-profiles')" class="sidebar-item clickable block px-4 py-2 rounded-lg cursor-pointer">
                         📋 用戶資料詳情
                     </a>
-                    <a href="#" onclick="showSection('user-search')" class="sidebar-item block px-4 py-2 rounded-lg cursor-pointer">
+                    <a href="#" onclick="showSection('user-search')" class="sidebar-item clickable block px-4 py-2 rounded-lg cursor-pointer">
                         🔍 用戶查詢分析
                     </a>
-                    <a href="#" onclick="showSection('chats')" class="sidebar-item block px-4 py-2 rounded-lg cursor-pointer">
+                    <a href="#" onclick="showSection('chats')" class="sidebar-item clickable block px-4 py-2 rounded-lg cursor-pointer">
                         💬 聊天記錄
                     </a>
-                    <a href="#" onclick="showSection('analytics')" class="sidebar-item block px-4 py-2 rounded-lg cursor-pointer">
+                    <a href="#" onclick="showSection('analytics')" class="sidebar-item clickable block px-4 py-2 rounded-lg cursor-pointer">
                         📈 數據分析
                     </a>
-                    <a href="#" onclick="showSection('settings')" class="sidebar-item block px-4 py-2 rounded-lg cursor-pointer">
+                    <a href="#" onclick="showSection('settings')" class="sidebar-item clickable block px-4 py-2 rounded-lg cursor-pointer">
                         ⚙️ 系統設定
                     </a>
                 </div>
@@ -52,8 +435,8 @@
         </div>
 
         <!-- 主內容區 -->
-        <div class="flex-1 overflow-auto">
-            <div class="p-6">
+        <div class="main-content flex-1 overflow-auto">
+            <div class="content-wrapper p-6">
                 <!-- 儀表板 -->
                 <div id="dashboard-section" class="section">
                     <h2 class="text-2xl font-bold text-gray-800 mb-6">📊 系統儀表板</h2>
@@ -134,8 +517,8 @@
                         <div class="px-6 py-4 border-b border-gray-200">
                             <h3 class="text-lg font-semibold text-gray-800">用戶列表</h3>
                         </div>
-                        <div class="overflow-x-auto">
-                            <table class="min-w-full divide-y divide-gray-200">
+                        <div class="table-responsive overflow-x-auto">
+                            <table class="desktop-table min-w-full divide-y divide-gray-200">
                                 <thead class="bg-gray-50">
                                     <tr>
                                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">用戶</th>
@@ -151,6 +534,10 @@
                                     </tr>
                                 </tbody>
                             </table>
+                        </div>
+                        <!-- 移動端卡片式顯示 -->
+                        <div id="users-mobile-cards" class="mobile-table-card p-4">
+                            <!-- 動態生成的移動端卡片 -->
                         </div>
                     </div>
                 </div>
@@ -195,10 +582,10 @@
                             <div class="flex-1">
                                 <label class="block text-sm font-medium text-gray-700 mb-2">搜尋用戶姓名</label>
                                 <input type="text" id="user-search-input" placeholder="輸入用戶姓名..." 
-                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors">
                             </div>
                             <div class="flex items-end">
-                                <button onclick="searchUser()" class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">
+                                <button onclick="searchUser()" class="clickable px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors">
                                     搜尋
                                 </button>
                             </div>
@@ -281,11 +668,11 @@
 
         <!-- 用戶資料詳情模態框 -->
         <div id="profile-detail-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden" onclick="closeProfileDetailModal(event)">
-            <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+            <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto modal" onclick="event.stopPropagation()">
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
                         <h2 class="text-2xl font-bold text-gray-900">📋 用戶留學需求詳情</h2>
-                        <button onclick="closeProfileDetailModal()" class="text-gray-400 hover:text-gray-600 text-2xl">
+                        <button onclick="closeProfileDetailModal()" class="clickable text-gray-400 hover:text-gray-600 text-2xl transition-colors">
                             ×
                         </button>
                     </div>
@@ -299,11 +686,11 @@
 
         <!-- 用戶詳情模態框 -->
         <div id="user-detail-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden" onclick="closeUserDetailModal(event)">
-            <div class="bg-white rounded-xl shadow-2xl max-w-6xl w-full mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+            <div class="bg-white rounded-xl shadow-2xl max-w-6xl w-full mx-4 max-h-[90vh] overflow-y-auto modal" onclick="event.stopPropagation()">
                 <div class="p-6">
                     <div class="flex justify-between items-center mb-6">
                         <h2 class="text-2xl font-bold text-gray-900">👤 用戶詳情</h2>
-                        <button onclick="closeUserDetailModal()" class="text-gray-400 hover:text-gray-600 text-2xl">
+                        <button onclick="closeUserDetailModal()" class="clickable text-gray-400 hover:text-gray-600 text-2xl transition-colors">
                             ×
                         </button>
                     </div>
@@ -324,7 +711,80 @@
         document.addEventListener('DOMContentLoaded', function() {
             showSection('dashboard');
             loadDashboardData();
+            
+            // 移動端初始化
+            initializeMobileFeatures();
         });
+        
+        // 移動端功能初始化
+        function initializeMobileFeatures() {
+            // 檢測移動端
+            const isMobile = window.innerWidth <= 768;
+            
+            if (isMobile) {
+                // 添加觸控事件支持
+                addTouchEvents();
+                
+                // 初始化側邊欄
+                initializeSidebar();
+            }
+            
+            // 監聽窗口大小變化
+            window.addEventListener('resize', function() {
+                const nowIsMobile = window.innerWidth <= 768;
+                if (nowIsMobile !== isMobile) {
+                    location.reload(); // 重新載入以適應新的屏幕尺寸
+                }
+            });
+        }
+        
+        // 切換側邊欄
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('open');
+        }
+        
+        // 初始化側邊欄
+        function initializeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 bg-black bg-opacity-50 z-40 hidden';
+            overlay.id = 'sidebar-overlay';
+            overlay.onclick = function() {
+                sidebar.classList.remove('open');
+                overlay.classList.add('hidden');
+            };
+            document.body.appendChild(overlay);
+            
+            // 監聽側邊欄狀態變化
+            const observer = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    if (mutation.attributeName === 'class') {
+                        if (sidebar.classList.contains('open')) {
+                            overlay.classList.remove('hidden');
+                        } else {
+                            overlay.classList.add('hidden');
+                        }
+                    }
+                });
+            });
+            
+            observer.observe(sidebar, { attributes: true });
+        }
+        
+        // 添加觸控事件支持
+        function addTouchEvents() {
+            // 為所有可點擊元素添加觸控支持
+            document.querySelectorAll('.clickable').forEach(element => {
+                element.addEventListener('touchstart', function(e) {
+                    this.style.transform = 'scale(0.98)';
+                });
+                
+                element.addEventListener('touchend', function(e) {
+                    this.style.transform = 'scale(1)';
+                });
+            });
+        }
 
         // 顯示不同區塊
         function showSection(sectionName) {
@@ -342,7 +802,20 @@
             document.getElementById(sectionName + '-section').classList.remove('hidden');
             
             // 添加活動狀態
-            event.target.classList.add('active');
+            if (event && event.target) {
+                event.target.classList.add('active');
+            }
+            
+            // 移動端自動關閉側邊欄
+            const isMobile = window.innerWidth <= 768;
+            if (isMobile) {
+                const sidebar = document.getElementById('sidebar');
+                sidebar.classList.remove('open');
+                const overlay = document.getElementById('sidebar-overlay');
+                if (overlay) {
+                    overlay.classList.add('hidden');
+                }
+            }
             
             // 載入對應數據
             switch(sectionName) {
@@ -387,7 +860,7 @@
                 document.getElementById('total-users').textContent = healthData.database?.users_count || '0';
                 document.getElementById('total-profiles').textContent = healthData.database?.profiles_count || '0';
                 document.getElementById('total-chats').textContent = healthData.database?.messages_count || '0';
-                document.getElementById('today-active').textContent = '計算中...';
+                document.getElementById('today-active').textContent = healthData.database?.today_active_users || '0';
                 
                 document.getElementById('database-status').textContent = '正常';
                 document.getElementById('ai-status').textContent = '正常';
@@ -412,6 +885,11 @@
                     const users = data.data.users;
                     if (users.length === 0) {
                         tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-4 text-center text-gray-500">暫無用戶數據</td></tr>';
+                        // 移動端卡片也顯示無數據
+                        const mobileCards = document.getElementById('users-mobile-cards');
+                        if (mobileCards) {
+                            mobileCards.innerHTML = '<div class="text-center text-gray-500 py-8">暫無用戶數據</div>';
+                        }
                     } else {
                         tbody.innerHTML = users.map(user => `
                             <tr>
@@ -438,10 +916,13 @@
                                     計算中...
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                    <a href="#" onclick="viewUserDetails('${user.user_id}')" class="text-blue-600 hover:text-blue-900">查看</a>
+                                    <a href="#" onclick="viewUserDetails('${user.user_id}')" class="clickable text-blue-600 hover:text-blue-900 transition-colors">查看</a>
                                 </td>
                             </tr>
                         `).join('');
+                        
+                        // 生成移動端卡片
+                        generateMobileCards(users);
                     }
                 } else {
                     tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-4 text-center text-red-500">載入失敗</td></tr>';
@@ -450,6 +931,51 @@
                 console.error('載入用戶數據失敗:', error);
                 tbody.innerHTML = '<tr><td colspan="5" class="px-6 py-4 text-center text-red-500">載入失敗</td></tr>';
             }
+        }
+        
+        // 生成移動端卡片
+        function generateMobileCards(users) {
+            const mobileCards = document.getElementById('users-mobile-cards');
+            if (!mobileCards) return;
+            
+            mobileCards.innerHTML = users.map(user => `
+                <div class="mobile-card">
+                    <div class="flex items-center mb-3">
+                        <div class="h-12 w-12 rounded-full bg-blue-500 flex items-center justify-center text-white text-lg font-medium">
+                            ${user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                        </div>
+                        <div class="ml-3 flex-1">
+                            <div class="text-lg font-medium text-gray-900">${user.name || '未知'}</div>
+                            <div class="text-sm text-gray-500">${user.email || '無'}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-2">
+                        <div class="flex justify-between">
+                            <span class="text-sm text-gray-600">登入方式:</span>
+                            <span class="px-2 py-1 rounded-full text-xs ${user.provider === 'google' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}">
+                                ${user.provider === 'google' ? 'Google' : user.provider || '未知'}
+                            </span>
+                        </div>
+                        
+                        <div class="flex justify-between">
+                            <span class="text-sm text-gray-600">註冊時間:</span>
+                            <span class="text-sm text-gray-900">${user.created_at ? new Date(user.created_at).toLocaleDateString('zh-TW') : '未知'}</span>
+                        </div>
+                        
+                        <div class="flex justify-between">
+                            <span class="text-sm text-gray-600">最後活動:</span>
+                            <span class="text-sm text-gray-900">計算中...</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-4 pt-3 border-t border-gray-200">
+                        <button onclick="viewUserDetails('${user.user_id}')" class="clickable w-full py-2 px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
+                            查看詳情
+                        </button>
+                    </div>
+                </div>
+            `).join('');
         }
 
         // 載入用戶 Profile 數據
@@ -487,7 +1013,7 @@
                                     ${profile.created_at ? new Date(profile.created_at).toLocaleDateString('zh-TW') : '未知'}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                    <a href="#" onclick="viewProfileDetails('${profile.profile_id}')" class="text-blue-600 hover:text-blue-900">查看詳情</a>
+                                    <a href="#" onclick="viewProfileDetails('${profile.profile_id}')" class="clickable text-blue-600 hover:text-blue-900 transition-colors">查看詳情</a>
                                 </td>
                             </tr>
                         `).join('');
@@ -858,7 +1384,7 @@
                 
                 <!-- 關閉按鈕 -->
                 <div class="flex justify-end mt-6">
-                    <button onclick="closeUserDetailModal()" class="px-6 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors">
+                    <button onclick="closeUserDetailModal()" class="clickable px-6 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors">
                         關閉
                     </button>
                 </div>
@@ -1056,7 +1582,7 @@
                 
                 <!-- 關閉按鈕 -->
                 <div class="flex justify-end mt-6">
-                    <button onclick="closeProfileDetailModal()" class="px-6 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors">
+                    <button onclick="closeProfileDetailModal()" class="clickable px-6 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors">
                         關閉
                     </button>
                 </div>
