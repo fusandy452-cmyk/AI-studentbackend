@@ -1830,90 +1830,45 @@ def admin_new():
 def debug_database():
     """調試用：查看資料庫內容"""
     try:
-        # 檢查資料庫狀態
-        db_info = {
-            'database_path': db.db_path,
-            'database_exists': os.path.exists(db.db_path),
-            'database_size': os.path.getsize(db.db_path) if os.path.exists(db.db_path) else 0,
-            'persistent_dir': os.path.dirname(db.db_path),
-            'persistent_dir_exists': os.path.exists(os.path.dirname(db.db_path))
-        }
+        if not db:
+            return jsonify({'ok': False, 'error': 'Database client not available'}), 500
         
-        conn = db.get_connection()
-        cursor = conn.cursor()
+        # 獲取資料庫健康狀態
+        health_result = db.health_check()
         
-        # 查詢所有用戶
-        cursor.execute('SELECT * FROM users')
-        users = cursor.fetchall()
+        # 獲取用戶統計
+        users_result = db.get_users_count()
+        profiles_result = db.get_profiles_count()
+        messages_result = db.get_messages_count()
         
-        # 調試：檢查用戶數據結構
-        if users:
-            logger.info(f"User data structure: {users[0]}")
-            logger.info(f"User data length: {len(users[0])}")
+        # 獲取用戶列表（通過 API）
+        users_data = []
+        all_users_result = db.get_all_users()
+        if all_users_result.get('ok'):
+            users_data = all_users_result.get('data', [])
+        else:
+            # 如果獲取失敗，至少顯示統計信息
+            if users_result.get('ok'):
+                users_count = users_result.get('data', 0)
+                users_data = [{'note': f'Total users: {users_count}'}]
         
-        # 查詢所有 profile
-        cursor.execute('SELECT * FROM user_profiles')
-        profiles = cursor.fetchall()
-        
-        # 調試：檢查 profile 數據結構
-        if profiles:
-            logger.info(f"Profile data structure: {profiles[0]}")
-            logger.info(f"Profile data length: {len(profiles[0])}")
-        
-        # 查詢所有聊天記錄
-        cursor.execute('SELECT * FROM chat_messages LIMIT 10')
-        messages = cursor.fetchall()
-        
-        conn.close()
+        # 獲取 profile 統計
+        profiles_data = []
+        if profiles_result.get('ok'):
+            profiles_count = profiles_result.get('data', 0)
+            profiles_data = [{'note': f'Total profiles: {profiles_count}'}]
         
         return jsonify({
             'ok': True,
-            'database_info': db_info,
+            'database_info': {
+                'service_url': os.getenv('DATABASE_SERVICE_URL', 'Not configured'),
+                'health_status': health_result.get('status', 'unknown'),
+                'database_path': health_result.get('database_path', 'unknown')
+            },
             'data': {
-                'users': [
-                    {
-                        'id': user[0],
-                        'user_id': user[1], 
-                        'email': user[2],
-                        'name': user[3],
-                        'avatar': user[4],
-                        'provider': 'google',  # 默認為 google，因為目前只有 Google 登入
-                        'created_at': user[5],
-                        'updated_at': user[6] if len(user) > 6 else user[5]
-                    } for user in users
-                ],
-                'profiles': [
-                    {
-                        'id': profile[0],
-                        'profile_id': profile[1],
-                        'user_id': profile[2],
-                        'user_role': profile[3],
-                        'student_name': profile[4],
-                        'student_email': profile[5],
-                        'parent_name': profile[6],
-                        'parent_email': profile[7],
-                        'relationship': profile[8],
-                        'child_name': profile[9],
-                        'child_email': profile[10],
-                        'citizenship': profile[11],
-                        'gpa': profile[12],
-                        'degree': profile[13],
-                        'countries': profile[14],
-                        'budget': profile[15],
-                        'target_intake': profile[16],
-                        'created_at': profile[17],
-                        'updated_at': profile[18]
-                    } for profile in profiles
-                ],
-                'recent_messages': [
-                    {
-                        'id': msg[0],
-                        'profile_id': msg[1],
-                        'message_type': msg[2],
-                        'message_content': msg[3][:100] + '...' if len(msg[3]) > 100 else msg[3],
-                        'created_at': msg[4]
-                    } for msg in messages
-                ],
+                'users': users_data,
+                'profiles': profiles_data,
+                'recent_messages': [],
                 'env_vars': {
                     'LINE_CHANNEL_ID': bool(LINE_CHANNEL_ID),
                     'LINE_CHANNEL_SECRET': bool(LINE_CHANNEL_SECRET),

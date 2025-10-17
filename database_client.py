@@ -47,6 +47,10 @@ class DatabaseClient:
         """儲存用戶資料"""
         return self._make_request('POST', '/api/users', data=user_data)
     
+    def get_all_users(self):
+        """獲取所有用戶資料"""
+        return self._make_request('GET', '/api/users')
+    
     def get_user(self, user_id):
         """獲取用戶資料"""
         return self._make_request('GET', f'/api/users/{user_id}')
