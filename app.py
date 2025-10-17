@@ -436,9 +436,9 @@ def health_check():
         db_status = "healthy"
         try:
             if db:
-            users_count = db.get_users_count()
-            profiles_count = db.get_profiles_count()
-            messages_count = db.get_messages_count()
+                users_count = db.get_users_count()
+                profiles_count = db.get_profiles_count()
+                messages_count = db.get_messages_count()
                 today_active = db.get_today_active_users()
             else:
                 db_status = "database_not_initialized"
